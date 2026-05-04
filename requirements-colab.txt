@@ -22,3 +22,10 @@ accelerate>=0.30
 sentence-transformers>=3.0
 huggingface-hub>=0.24
 faiss-cpu>=1.8
+
+# llama-cpp-python: pre-built CUDA 12.2 wheel for Colab T4. The matching
+# wheel index is added with --extra-index-url in the bootstrap cell:
+#     pip install -r requirements-colab.txt \
+#         --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu122
+# Building from source on Colab takes 5+ minutes; the wheel takes seconds.
+llama-cpp-python>=0.3

@@ -18,6 +18,12 @@ dev = [
     "nbstripout>=0.7",
     "ipykernel>=6.29",
 ]
+# Optional. Heavy and platform-specific (Metal on Mac, CUDA wheel on Colab,
+# CPU-only on most laptops). Install with `uv sync --group llm`.
+llm = [
+    "llama-cpp-python>=0.3",
+    "huggingface-hub>=0.24",
+]
 
 [build-system]
 requires = ["hatchling"]
