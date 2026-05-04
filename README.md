@@ -205,18 +205,3 @@ manual_play_loop(client, competition_id=2, max_games=3)  # change to yours
 Type the option id at each prompt; the helper logs every question to the shared DB.
 Aim for ≥ 50 logged questions on your competition before we start offline strategy
 iteration.
-
-## Five accounts
-
-We have five logins. Use them as **manual parallelism** — different teammates running
-different strategies/models in parallel, with the leaderboards as the comparison.
-
-**Don't** automate logging in as all five and flooding the server. The brief warns
-explicitly about rate limiting; getting flagged the week before the deadline would be
-self-inflicted.
-
-## Coding-assistant statement
-
-The brief requires a statement at the start of the deliverable on whether and how
-coding assistants were used. Placeholder is in `notebooks/final.ipynb` — **edit it
-before submission**, and make sure everyone on the team agrees on the wording.
