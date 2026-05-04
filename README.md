@@ -173,9 +173,9 @@ Until baselines are wired up, the DB grows by us playing the game manually:
 
 | Teammate | Competition |
 |---|---|
-| Leon | 0 — Entertainment |
+| Leon | 2 — Science and Nature |
 | _2_ | 1 — Ancient History and Politics |
-| _3_ | 2 — Science and Nature |
+| _3_ | 0 — Entertainment |
 | _4_ | 3 — Maths |
 | _5_ | roving / fills gaps |
 
