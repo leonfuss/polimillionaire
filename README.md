@@ -179,18 +179,20 @@ The bootstrap cell mounts Drive and points `POLIMILLIONAIRE_DB_PATH` at this fil
 automatically. SQLite WAL mode handles concurrent appends from all five Colab
 runtimes.
 
-### Corpus bootstrap (one teammate per competition)
+### Corpus bootstrap
 
-Until LLM strategies are wired up, the DB grows by us playing manually. Each teammate
-takes one competition:
+Until LLM strategies are wired up, the DB grows by us playing manually. Every logged
+question becomes a labelled datapoint we can replay strategies against later — fast
+offline performance testing without burning the live API or the 30-second timer.
 
-| Teammate | Competition |
+Competition IDs:
+
+| ID | Name |
 |---|---|
-| Leon | 2 — Science and Nature |
-| Antoine | 1 — Ancient History and Politics |
-| Aleksa | 0 — Entertainment |
-| Luco | 3 — Maths |
-| _ | roving / fills gaps |
+| 0 | Entertainment |
+| 1 | Ancient History and Politics |
+| 2 | Science and Nature |
+| 3 | Maths |
 
 In a Colab notebook, after the bootstrap and Drive-mount cells:
 
@@ -199,9 +201,7 @@ from polimillionaire import make_client
 from polimillionaire.play import manual_play_loop
 
 client = make_client()
-manual_play_loop(client, competition_id=2, max_games=3)  # change to yours
+manual_play_loop(client, competition_id=2, max_games=3)
 ```
 
 Type the option id at each prompt; the helper logs every question to the shared DB.
-Aim for ≥ 50 logged questions on your competition before we start offline strategy
-iteration.
