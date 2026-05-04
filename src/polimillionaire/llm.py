@@ -13,6 +13,7 @@ later, add a `complete_with_tools()` method here.
 
 from __future__ import annotations
 
+import gc
 import json
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -85,6 +86,26 @@ class LLM:
         self.spec = spec
         self.name = name
 
+    @property
+    def is_loaded(self) -> bool:
+        return self._inner is not None
+
+    def unload(self) -> None:
+        """Free the underlying VRAM/RAM allocation.
+
+        Idempotent. After this call, `complete` and `complete_json` will fail —
+        the wrapper still exists so any external references stay valid, but
+        the C-level model is gone. `load_llm` calls this automatically before
+        loading a different model.
+        """
+        if self._inner is None:
+            return
+        close = getattr(self._inner, "close", None)
+        if close is not None:
+            close()
+        self._inner = None  # type: ignore[assignment]
+        gc.collect()
+
     def _prepare(self, messages: list[Message]) -> list[Message]:
         if not self.spec.user_suffix or not messages:
             return messages
@@ -141,16 +162,43 @@ class LLM:
             raise ValueError(f"grammar-constrained output did not parse: {raw!r}") from e
 
 
-def load_llm(name: str = "qwen3-8b", **overrides: Any) -> LLM:
-    """Load a model from the registry. `overrides` are passed to llama_cpp.Llama.
+# Module-level handle to the most recently loaded model. Caching by alias
+# avoids redundant reloads in notebooks; eviction on alias change releases
+# VRAM that IPython would otherwise pin via _, Out[N], or stale references.
+_active: LLM | None = None
 
-    Defaults: `n_gpu_layers=-1` (offload everything to GPU when one is available;
-    falls back to CPU), `verbose=False`.
+
+def load_llm(name: str = "qwen3-8b", *, force_reload: bool = False, **overrides: Any) -> LLM:
+    """Load a model from the registry, evicting any previously loaded model.
+
+    Notebook callers can re-run this cell freely: a second call with the same
+    alias and no overrides returns the cached `LLM`; a different alias unloads
+    the prior one before loading. Pass `force_reload=True` to rebuild even
+    when the alias is unchanged.
+
+    `overrides` are forwarded to `llama_cpp.Llama.from_pretrained`.
+    Defaults: `n_gpu_layers=-1` (offload everything to GPU when available),
+    `verbose=False`.
     """
+    global _active
+
     if name not in MODELS:
         raise KeyError(f"unknown model {name!r}; known: {sorted(MODELS)}")
-    spec = MODELS[name]
 
+    if (
+        _active is not None
+        and _active.is_loaded
+        and _active.name == name
+        and not overrides
+        and not force_reload
+    ):
+        return _active
+
+    if _active is not None:
+        _active.unload()
+        _active = None
+
+    spec = MODELS[name]
     from llama_cpp import Llama
 
     kwargs: dict[str, Any] = {
@@ -165,7 +213,17 @@ def load_llm(name: str = "qwen3-8b", **overrides: Any) -> LLM:
         filename=spec.filename,
         **kwargs,
     )
-    return LLM(inner=inner, spec=spec, name=name)
+    _active = LLM(inner=inner, spec=spec, name=name)
+    return _active
 
 
-__all__ = ["LLM", "MODELS", "Message", "ModelSpec", "load_llm"]
+def unload() -> None:
+    """Force-release whatever model `load_llm` last returned."""
+    global _active
+    if _active is not None:
+        _active.unload()
+        _active = None
+        gc.collect()
+
+
+__all__ = ["LLM", "MODELS", "Message", "ModelSpec", "load_llm", "unload"]
