@@ -106,8 +106,10 @@ Because the repo is **private**, cloning from Colab needs a GitHub token. One-ti
 setup per person:
 
 1. Create a fine-grained PAT at <https://github.com/settings/personal-access-tokens/new>
-   - **Resource owner**: `leonfuss`
-   - **Repository access**: only `leonfuss/polimillionaire`
+   (each teammate makes their *own* — don't share tokens, they're per-person)
+   - **Resource owner**: your own GitHub account (not `leonfuss`)
+   - **Repository access**: only `leonfuss/polimillionaire` (it shows up in the
+     list because you're a collaborator)
    - **Repository permissions** → **Contents**: Read-only
    - **Expiration**: 90 days is plenty
 2. In any Colab notebook, open the **Secrets** tab (key icon in the sidebar) and add:
@@ -119,18 +121,29 @@ setup per person:
 Then the top cell of any Colab notebook is:
 
 ```python
+import os
 import sys
 
 from google.colab import userdata
 
 gh_token = userdata.get('GH_TOKEN')
-!git clone https://{gh_token}@github.com/leonfuss/polimillionaire.git
-%cd polimillionaire
+repo_dir = "/content/polimillionaire"
+
+if os.path.isdir(repo_dir):
+    os.chdir(repo_dir)
+    !git checkout -q main && git pull --ff-only origin main
+else:
+    !git clone https://{gh_token}@github.com/leonfuss/polimillionaire.git $repo_dir
+    os.chdir(repo_dir)
+
 !pip install -q -r requirements-colab.txt && pip install -q -e . --no-deps
 
 if "/content/polimillionaire/src" not in sys.path:
     sys.path.insert(0, "/content/polimillionaire/src")
 ```
+
+Re-running this cell on the same runtime is safe: it pulls latest `main` instead
+of failing on the second clone.
 
 Two things in here are load-bearing:
 
