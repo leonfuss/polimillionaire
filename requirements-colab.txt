@@ -1,0 +1,24 @@
+# Deps for Colab runtimes.
+#
+# Setup cell in a Colab notebook:
+#     !pip install -q -r requirements-colab.txt && pip install -e . --no-deps
+#
+# The --no-deps on the editable install is load-bearing: it stops pip from
+# re-resolving transformers/torch and burning 5+ minutes per fresh runtime.
+# Because --no-deps also skips the *light* deps from pyproject.toml, we
+# mirror them here (unpinned) so they get installed by the first pip call.
+
+# Light deps (mirrors pyproject.toml; unpinned so Colab's preinstalled
+# versions win when present).
+requests
+python-dotenv
+polars
+pydantic
+
+# Heavy ML deps: minimum bounds only, so Colab's preinstalled torch wins
+# the resolve.
+transformers>=4.40
+accelerate>=0.30
+sentence-transformers>=3.0
+huggingface-hub>=0.24
+faiss-cpu>=1.8

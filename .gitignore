@@ -1,0 +1,38 @@
+# uv-managed virtualenv
+.venv/
+
+# secrets
+.env
+.env.local
+
+# Strategy A: scratch notebooks live in Google Drive, not git.
+# Only notebooks/final.ipynb (the deliverable) is committed.
+notebooks/scratch/
+
+# Notebook checkpoints
+.ipynb_checkpoints/
+
+# Local data — the live SQLite question log lives in shared Drive,
+# not the repo. Snapshots can be committed deliberately with `git add -f`.
+data/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.db
+
+# Python build artefacts
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

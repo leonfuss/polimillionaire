@@ -1,0 +1,30 @@
+# Vendored upstream code is committed verbatim — don't normalise its whitespace.
+exclude: ^src/polimillionaire/_vendor/
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: check-merge-conflict
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-yaml
+      - id: check-toml
+      - id: check-added-large-files
+        args: ['--maxkb=51200']  # 50 MB; nobody commits a model checkpoint by accident
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.9
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: https://github.com/kynan/nbstripout
+    rev: 0.7.1
+    hooks:
+      - id: nbstripout
+        # Strips outputs from any committed .ipynb. Does NOT fire on
+        # Colab's "Save to GitHub" round-trip (that goes through the
+        # GitHub web API and bypasses local hooks) — which is one
+        # reason scratch notebooks are kept out of git entirely.
