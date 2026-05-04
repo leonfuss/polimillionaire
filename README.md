@@ -102,20 +102,49 @@ So:
 
 ## Running on Colab
 
-Top cell of any Colab notebook:
+Because the repo is **private**, cloning from Colab needs a GitHub token. One-time
+setup per person:
+
+1. Create a fine-grained PAT at <https://github.com/settings/personal-access-tokens/new>
+   - **Resource owner**: `leonfuss`
+   - **Repository access**: only `leonfuss/polimillionaire`
+   - **Repository permissions** → **Contents**: Read-only
+   - **Expiration**: 90 days is plenty
+2. In any Colab notebook, open the **Secrets** tab (key icon in the sidebar) and add:
+   - `GH_TOKEN` = the PAT you just created
+   - `POLIMILLIONAIRE_API_URL` = `http://131.175.15.22:51111/`
+   - `POLIMILLIONAIRE_USER` = your PoliMillionaire username
+   - `POLIMILLIONAIRE_PASSWORD` = your PoliMillionaire password
+
+Then the top cell of any Colab notebook is:
 
 ```python
-!git clone https://github.com/<your-handle>/polimillionaire.git
+import sys
+
+from google.colab import userdata
+
+gh_token = userdata.get('GH_TOKEN')
+!git clone https://{gh_token}@github.com/leonfuss/polimillionaire.git
 %cd polimillionaire
-!pip install -q -r requirements-colab.txt && pip install -e . --no-deps
+!pip install -q -r requirements-colab.txt && pip install -q -e . --no-deps
+
+if "/content/polimillionaire/src" not in sys.path:
+    sys.path.insert(0, "/content/polimillionaire/src")
 ```
 
-The `--no-deps` is load-bearing: it stops pip from re-resolving torch/transformers and
-burning 5+ minutes per fresh runtime. Colab's preinstalled torch wins.
+Two things in here are load-bearing:
 
-For credentials, use **Colab Secrets** (key icon in the sidebar) and add
-`POLIMILLIONAIRE_API_URL`, `POLIMILLIONAIRE_USER`, `POLIMILLIONAIRE_PASSWORD`.
-`load_settings()` picks them up automatically.
+- The `--no-deps` on the editable install stops pip from re-resolving
+  torch/transformers and burning 5+ minutes per fresh runtime. Colab's
+  preinstalled torch wins.
+- The `sys.path` line works around a hatchling/Colab quirk: editable installs
+  register a PEP 660 import hook via a `.pth` file, but `.pth` files are only
+  processed at Python startup — by the time the bootstrap cell runs, the kernel
+  is already up. Pointing `sys.path` at `src/` directly is the reliable
+  workaround (and a kernel restart would do the same thing).
+
+`load_settings()` picks the PoliMillionaire credentials up from Colab Secrets
+automatically — you don't need to handle them explicitly.
 
 ## The question log
 
