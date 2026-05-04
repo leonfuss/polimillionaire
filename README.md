@@ -1,65 +1,73 @@
 # PoliMillionaire
 
-A chatbot for the **Who Wants to be a PoliMillionaire?** quiz — group assignment for
-NLP at PoliMi, AY 2025/26. Due **2 June 2026, 23:00** via WeBeep.
+Group assignment for Natural Language Processing at Politecnico di Milano, AY 2025/26:
+build a chatbot that plays **Who Wants to be a PoliMillionaire?**. Due **2 June 2026,
+23:00** via WeBeep.
 
-The deliverable is `notebooks/final.ipynb` plus a 5-minute video. This repo is the
-working environment we share to build it.
+The deliverable is a Colab notebook (`notebooks/final.ipynb`) and a 5-minute
+screen-capture video. This repo is the shared working environment we use to build them.
 
 ## Team
 
-| Name | Email | GitHub | PoliMillionaire username |
+| Name | Email | GitHub | PoliMillionaire user |
 |---|---|---|---|
-| _fill in_ | _ | _ | _ |
-| _fill in_ | _ | _ | _ |
-| _fill in_ | _ | _ | _ |
-| _fill in_ | _ | _ | _ |
-| _fill in_ | _ | _ | _ |
+| Leon Fuß | leon.fuss@icloud.com | leonfuss | leonfuss |
+| Antoine Gaborieau | _ | AntoineGaborieau | _ |
+| Aleksa Pulai | _ | aleksapulai | _ |
+| Luco _ | _ | LucBruc | _ |
+| _ | _ | _ | _ |
 
-## Setup
+## Local setup
 
-You need **git** and **[uv](https://docs.astral.sh/uv/getting-started/installation/)**
-(the fast Python package manager — it brings its own Python, you don't need a system
-one). Then:
+For working on your laptop (not Colab). You need **git** and **[uv](https://docs.astral.sh/uv/getting-started/installation/)**.
+uv brings its own Python, so you don't need a system Python install.
 
 ```bash
-git clone <repo-url> polimillionaire
+git clone git@github.com:leonfuss/polimillionaire.git
 cd polimillionaire
 uv sync                       # creates .venv, installs deps
-uv run pre-commit install     # important — keeps the repo clean
+uv run pre-commit install     # installs the git hooks (required, see below)
 cp .env.example .env          # then open .env and fill in your credentials
 uv run pytest                 # sanity check
 ```
 
-> First time with uv? It replaces `pip` + `venv`. You don't activate the venv —
-> `uv run <cmd>` runs inside it automatically.
+`uv run <cmd>` runs `<cmd>` inside the project's `.venv`. You never activate the venv
+manually.
 
 ## What's in here
 
+Three places code lives, with a one-way arrow between them:
+**scratch notebook (in your own Drive) → shared package (`src/`) → `final.ipynb`** (the
+deliverable, assembled at the end). The repo holds the second and third; the first
+never enters git.
+
 ```
 polimillionaire/
-├── pyproject.toml             light, stable deps
+├── pyproject.toml             light, stable deps for local dev
 ├── requirements-colab.txt     heavy ML deps for Colab runtimes
-├── .pre-commit-config.yaml    hook config
+├── .pre-commit-config.yaml    git hook config
 ├── src/polimillionaire/
-│   ├── client.py              make_client() — authenticated MillionaireClient
-│   ├── config.py              Settings; loads .env or Colab Secrets
-│   ├── recording.py           QuestionLog (SQLite) — our canonical artefact
-│   ├── llm.py                 load_llm(name) — wraps HF transformers (TODO)
-│   ├── strategies/            the swappable unit: zero-shot, CoT, RAG, …
+│   ├── client.py              make_client() — authenticated game API client
+│   ├── config.py              loads credentials from .env or Colab Secrets
+│   ├── recording.py           SQLite question log (the canonical artefact)
+│   ├── play.py                manual_play_loop() — human-in-the-loop game runner
+│   ├── llm.py                 load_llm(name) — wraps HF transformers
+│   ├── strategies/            zero-shot, CoT, RAG, ensemble, agent — each its own file
 │   ├── prompts/               versioned prompt templates
-│   ├── eval/replay.py         offline replay over the SQLite log
-│   └── _vendor/               lecturer's millionaire_client, do not modify
+│   ├── eval/replay.py         offline replay of strategies over the SQLite log
+│   └── _vendor/               lecturer's millionaire_client (do not modify)
 ├── tests/
 ├── notebooks/
-│   ├── final.ipynb            the deliverable — assembled in the last week
-│   └── scratch/               personal exploration (gitignored, lives in Drive)
+│   ├── final.ipynb            the deliverable
+│   └── scratch/               personal exploration (gitignored, in your Drive)
 └── scripts/sync_vendor.sh     refresh the vendored package if upstream ships a fix
 ```
 
 ## Day-to-day workflow
 
-Feature branches + pull requests. **Nobody commits directly to `main`.**
+Feature branches + pull requests. **Nobody commits directly to `main`.** Every change
+to `src/`, tests, prompts, CI config, or `pyproject.toml` goes through a PR. Edits to
+your own scratch notebook in Drive never need one (it's gitignored).
 
 ```bash
 git switch main && git pull
@@ -71,54 +79,59 @@ git push -u origin feat/<short-name>
 gh pr create
 ```
 
-A teammate reviews, CI passes, you merge (squash is fine).
+Then: one teammate reviews, CI passes, you merge (squash is fine). Both are required
+by branch protection.
 
-- Conventional commit subjects: `feat:`, `fix:`, `refactor:`, `docs:`, `test:`, `chore:`. ≤ 72 chars.
-- Run `uv run pre-commit run --all-files` before opening a big PR.
+- Commit subjects use [conventional commit](https://www.conventionalcommits.org/) types: `feat:`, `fix:`, `refactor:`, `docs:`, `test:`, `chore:`. Keep them ≤ 72 chars.
+- Branch names: `feat/<thing>`, `fix/<thing>`, `docs/<thing>`.
 
 ### Pre-commit hooks
 
-The hooks strip notebook outputs, format Python with `ruff`, and catch trailing
-whitespace, broken YAML/TOML, and accidentally-committed large files. **Don't bypass
-them with `--no-verify`** — the same hooks re-run on every PR via GitHub Actions, and
-`main` is branch-protected to require them green.
+The hooks run on every `git commit` and:
 
-If a commit fails, read the message: most hooks auto-fix and you just `git add` the
-fixes and re-commit.
+- strip outputs from any committed `.ipynb`
+- format and lint Python with `ruff`
+- catch trailing whitespace, broken YAML/TOML, and accidental large-file commits
 
-## Notebooks (we keep them out of git)
+Most hooks auto-fix — if a commit fails, just `git add` the fixed files and re-commit.
 
-`.ipynb` files merge horribly, and Colab's "Save to GitHub" bypasses our local hooks.
-So:
+**Don't bypass them with `--no-verify`.** The same hooks re-run on every PR via GitHub
+Actions, and `main` is branch-protected to require them green.
 
-- **Personal exploration** → `notebooks/scratch/<your-name>.ipynb`. The whole `scratch/`
-  folder is gitignored; save to your own Google Drive (Colab does this by default).
-- **`notebooks/final.ipynb`** is the deliverable. It starts as a placeholder with the
-  team table and the coding-assistant statement. We assemble it from already-merged
+## Notebooks
+
+`.ipynb` files merge poorly, and Colab's "Save to GitHub" bypasses our local hooks.
+So we only commit the deliverable; everything else stays in Drive.
+
+- **Personal exploration** → a notebook in your own Drive (Colab saves there by
+  default). The repo's `notebooks/scratch/` is gitignored as a placeholder; you don't
+  need to put anything there.
+- **`notebooks/final.ipynb`** is the deliverable. We assemble it from already-merged
   code in the final week — one person owns assembly, everyone pair-reviews before
   submission.
-- **All real code lives in `src/polimillionaire/`**. The notebook is markdown narrative
-  + thin `from polimillionaire import …` calls.
+- **Real logic lives in `src/polimillionaire/`**. Notebooks are markdown narrative +
+  thin `from polimillionaire import …` calls — never logic.
 
 ## Running on Colab
 
-Because the repo is **private**, cloning from Colab needs a GitHub token. One-time
-setup per person:
+The repo is private, so cloning from Colab needs a GitHub token. One-time setup per
+person:
 
-1. Create a fine-grained PAT at <https://github.com/settings/personal-access-tokens/new>
-   (each teammate makes their *own* — don't share tokens, they're per-person)
-   - **Resource owner**: your own GitHub account (not `leonfuss`)
-   - **Repository access**: only `leonfuss/polimillionaire` (it shows up in the
-     list because you're a collaborator)
-   - **Repository permissions** → **Contents**: Read-only
-   - **Expiration**: 90 days is plenty
-2. In any Colab notebook, open the **Secrets** tab (key icon in the sidebar) and add:
-   - `GH_TOKEN` = the PAT you just created
-   - `POLIMILLIONAIRE_API_URL` = `http://131.175.15.22:51111/`
-   - `POLIMILLIONAIRE_USER` = your PoliMillionaire username
-   - `POLIMILLIONAIRE_PASSWORD` = your PoliMillionaire password
+1. **Generate a fine-grained PAT** at <https://github.com/settings/personal-access-tokens/new>:
+   - Resource owner: your own GitHub account (not `leonfuss`)
+   - Repository access: only `leonfuss/polimillionaire` (it shows up because you're a collaborator)
+   - Repository permissions → Contents: Read-only
+   - Expiration: 90 days
 
-Then the top cell of any Colab notebook is:
+   Don't share tokens — they're per-person.
+
+2. **Add Colab Secrets** (key icon in the sidebar):
+   - `GH_TOKEN` — the PAT
+   - `POLIMILLIONAIRE_API_URL` — `http://131.175.15.22:51111/`
+   - `POLIMILLIONAIRE_USER` — your PoliMillionaire username
+   - `POLIMILLIONAIRE_PASSWORD` — your PoliMillionaire password
+
+The top cell of any Colab notebook bootstraps the package:
 
 ```python
 import os
@@ -142,55 +155,42 @@ if "/content/polimillionaire/src" not in sys.path:
     sys.path.insert(0, "/content/polimillionaire/src")
 ```
 
-Re-running this cell on the same runtime is safe: it pulls latest `main` instead
-of failing on the second clone.
+Re-running it on the same runtime is safe — the cell detects the existing clone and
+pulls latest `main` instead. The `--no-deps` flag and the `sys.path` line are both
+intentional; don't remove them.
 
-Two things in here are load-bearing:
-
-- The `--no-deps` on the editable install stops pip from re-resolving
-  torch/transformers and burning 5+ minutes per fresh runtime. Colab's
-  preinstalled torch wins.
-- The `sys.path` line works around a hatchling/Colab quirk: editable installs
-  register a PEP 660 import hook via a `.pth` file, but `.pth` files are only
-  processed at Python startup — by the time the bootstrap cell runs, the kernel
-  is already up. Pointing `sys.path` at `src/` directly is the reliable
-  workaround (and a kernel restart would do the same thing).
-
-`load_settings()` picks the PoliMillionaire credentials up from Colab Secrets
-automatically — you don't need to handle them explicitly.
+`load_settings()` reads the PoliMillionaire credentials from Colab Secrets
+automatically.
 
 ## The shared question log
 
-The questions are server-side and closed: every one of them you see, logged correctly,
-is a permanent training/eval datapoint nobody else can recreate. We keep them in one
-**SQLite** file — schema in `src/polimillionaire/recording.py`.
+Every question you see is logged to a shared SQLite DB — questions are server-side and
+closed, so each one is a permanent training/eval datapoint nobody outside the team can
+recreate. Schema lives in `src/polimillionaire/recording.py`.
 
-The DB lives in **Leon's Google Drive** at `MyDrive/PoliMillionaire/questions.sqlite`
-and is shared with the other four teammates. To make the path work in Colab, each
-teammate has to add a shortcut:
+The file is in **Leon's Google Drive** at `MyDrive/PoliMillionaire/questions.sqlite`.
+For the Colab path to resolve, each teammate has to add a shortcut to their own Drive:
 
 1. Open the shared folder link Leon sends you.
 2. Right-click the `PoliMillionaire` folder → **Organize → Add shortcut to Drive**.
 3. Place the shortcut in **My Drive**.
 
-After that, the path `/content/drive/MyDrive/PoliMillionaire/questions.sqlite`
-resolves correctly when Drive is mounted in Colab. The bootstrap notebook does the
-mount + path setup for you.
-
-SQLite WAL mode handles 5-runtime concurrent appends. Polars reads it directly via
-`pl.read_database` — see `src/polimillionaire/eval/replay.py` for the pattern.
+The bootstrap cell mounts Drive and points `POLIMILLIONAIRE_DB_PATH` at this file
+automatically. SQLite WAL mode handles concurrent appends from all five Colab
+runtimes.
 
 ### Corpus bootstrap (one teammate per competition)
 
-Until baselines are wired up, the DB grows by us playing the game manually:
+Until LLM strategies are wired up, the DB grows by us playing manually. Each teammate
+takes one competition:
 
 | Teammate | Competition |
 |---|---|
 | Leon | 2 — Science and Nature |
-| _2_ | 1 — Ancient History and Politics |
-| _3_ | 0 — Entertainment |
-| _4_ | 3 — Maths |
-| _5_ | roving / fills gaps |
+| Antoine | 1 — Ancient History and Politics |
+| Aleksa | 0 — Entertainment |
+| Luco | 3 — Maths |
+| _ | roving / fills gaps |
 
 In a Colab notebook, after the bootstrap and Drive-mount cells:
 
@@ -199,22 +199,24 @@ from polimillionaire import make_client
 from polimillionaire.play import manual_play_loop
 
 client = make_client()
-manual_play_loop(client, competition_id=0, max_games=3)  # set competition_id to yours
+manual_play_loop(client, competition_id=2, max_games=3)  # change to yours
 ```
 
 Type the option id at each prompt; the helper logs every question to the shared DB.
-Aim for ≥ 50 logged questions on your competition before we start running offline
-strategy iteration.
+Aim for ≥ 50 logged questions on your competition before we start offline strategy
+iteration.
 
 ## Five accounts
 
-Use them as **manual parallelism**: Anna runs strategy A on her account, Marco runs
-strategy B on his, the leaderboards tell us which works. Don't automate logging in as
-all five and flooding the server — the brief warns explicitly about rate limiting and
-we don't want to be the group that triggers it the week before the deadline.
+We have five logins. Use them as **manual parallelism** — different teammates running
+different strategies/models in parallel, with the leaderboards as the comparison.
 
-## Coding-assistant statement (assignment requirement)
+**Don't** automate logging in as all five and flooding the server. The brief warns
+explicitly about rate limiting; getting flagged the week before the deadline would be
+self-inflicted.
+
+## Coding-assistant statement
 
 The brief requires a statement at the start of the deliverable on whether and how
-coding assistants were used. Placeholder lives in `notebooks/final.ipynb` — **edit it
+coding assistants were used. Placeholder is in `notebooks/final.ipynb` — **edit it
 before submission**, and make sure everyone on the team agrees on the wording.
