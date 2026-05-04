@@ -146,15 +146,52 @@ Two things in here are load-bearing:
 `load_settings()` picks the PoliMillionaire credentials up from Colab Secrets
 automatically — you don't need to handle them explicitly.
 
-## The question log
+## The shared question log
 
 The questions are server-side and closed: every one of them you see, logged correctly,
 is a permanent training/eval datapoint nobody else can recreate. We keep them in one
 **SQLite** file — schema in `src/polimillionaire/recording.py`.
 
-Live runs should write to a shared Drive path, set via `POLIMILLIONAIRE_DB_PATH` in
-`.env` or Colab Secrets. SQLite WAL mode lets multiple Colab runtimes append safely.
-Polars reads it directly via `pl.read_database`.
+The DB lives in **Leon's Google Drive** at `MyDrive/PoliMillionaire/questions.sqlite`
+and is shared with the other four teammates. To make the path work in Colab, each
+teammate has to add a shortcut:
+
+1. Open the shared folder link Leon sends you.
+2. Right-click the `PoliMillionaire` folder → **Organize → Add shortcut to Drive**.
+3. Place the shortcut in **My Drive**.
+
+After that, the path `/content/drive/MyDrive/PoliMillionaire/questions.sqlite`
+resolves correctly when Drive is mounted in Colab. The bootstrap notebook does the
+mount + path setup for you.
+
+SQLite WAL mode handles 5-runtime concurrent appends. Polars reads it directly via
+`pl.read_database` — see `src/polimillionaire/eval/replay.py` for the pattern.
+
+### Corpus bootstrap (one teammate per competition)
+
+Until baselines are wired up, the DB grows by us playing the game manually:
+
+| Teammate | Competition |
+|---|---|
+| Leon | 2 — Science and Nature |
+| _2_ | 1 — Ancient History and Politics |
+| _3_ | 0 — Entertainment |
+| _4_ | 3 — Maths |
+| _5_ | roving / fills gaps |
+
+In a Colab notebook, after the bootstrap and Drive-mount cells:
+
+```python
+from polimillionaire import make_client
+from polimillionaire.play import manual_play_loop
+
+client = make_client()
+manual_play_loop(client, competition_id=0, max_games=3)  # set competition_id to yours
+```
+
+Type the option id at each prompt; the helper logs every question to the shared DB.
+Aim for ≥ 50 logged questions on your competition before we start running offline
+strategy iteration.
 
 ## Five accounts
 
