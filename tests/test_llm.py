@@ -6,6 +6,8 @@ We never download a real GGUF in tests — that's an integration concern.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from polimillionaire.llm import MODELS, ModelSpec, load_llm
@@ -17,7 +19,7 @@ def test_default_model_in_registry() -> None:
     assert isinstance(spec, ModelSpec)
     assert spec.repo_id.endswith("Qwen3-8B-GGUF")
     assert "Q4_K_M" in spec.filename
-    assert "/no_think" in spec.system_prefix
+    assert "/no_think" in spec.user_suffix
 
 
 def test_registry_covers_all_shortlisted_aliases() -> None:
@@ -30,15 +32,16 @@ def test_load_llm_rejects_unknown_alias() -> None:
         load_llm("does-not-exist")
 
 
-def test_load_llm_known_alias_imports_llama_cpp() -> None:
-    """If llama_cpp isn't installed, the import error is what we expect.
-
-    We don't actually load a model — that would download ~5 GB. We just
-    confirm the function gets past the registry lookup and reaches the
-    backend import, where ImportError is the only acceptable failure
-    mode on a machine without the optional dep.
-    """
+def test_grammar_round_trips_a_trivial_schema() -> None:
+    """Sanity check that llama_cpp.LlamaGrammar can derive a grammar
+    from the kind of MCQ schema complete_json() will be passed."""
     pytest.importorskip("llama_cpp")
-    # If llama_cpp is installed, calling load_llm() would download a model.
-    # We stop at the registry boundary instead.
-    assert MODELS["qwen3-8b"].n_ctx == 8192
+    from llama_cpp import LlamaGrammar
+
+    schema = {
+        "type": "object",
+        "properties": {"answer": {"type": "string", "enum": ["A", "B", "C", "D"]}},
+        "required": ["answer"],
+    }
+    grammar = LlamaGrammar.from_json_schema(json.dumps(schema))
+    assert grammar is not None

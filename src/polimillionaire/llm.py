@@ -28,9 +28,10 @@ class ModelSpec:
     repo_id: str
     filename: str  # may contain glob wildcards (e.g. "*Q4_K_M*.gguf")
     n_ctx: int = 8192
-    # Prepended to every system prompt. Empty unless the model needs it
-    # (Qwen3's `/no_think` switch is the canonical case).
-    system_prefix: str = ""
+    # Appended to the final user turn. Currently used for Qwen3's `/no_think`
+    # switch — the model card places this token at the end of the user message,
+    # not in the system prompt.
+    user_suffix: str = ""
     # Extra kwargs passed straight to llama_cpp.Llama.from_pretrained.
     extra: dict[str, Any] = field(default_factory=dict)
 
@@ -42,19 +43,19 @@ MODELS: dict[str, ModelSpec] = {
     "qwen3-8b": ModelSpec(
         repo_id="Qwen/Qwen3-8B-GGUF",
         filename="*Q4_K_M*.gguf",
-        system_prefix="/no_think\n",
+        user_suffix=" /no_think",
     ),
     "qwen3-14b": ModelSpec(
         repo_id="Qwen/Qwen3-14B-GGUF",
         filename="*Q4_K_M*.gguf",
-        system_prefix="/no_think\n",
+        user_suffix=" /no_think",
     ),
     "gemma3-12b": ModelSpec(
         repo_id="bartowski/google_gemma-3-12b-it-GGUF",
         filename="*Q4_K_M*.gguf",
     ),
     "granite-8b": ModelSpec(
-        repo_id="ibm-granite/granite-4.1-8b-GGUF",
+        repo_id="bartowski/ibm-granite_granite-4.1-8b-GGUF",
         filename="*Q4_K_M*.gguf",
     ),
     "hermes3-8b": ModelSpec(
@@ -85,15 +86,16 @@ class LLM:
         self.name = name
 
     def _prepare(self, messages: list[Message]) -> list[Message]:
-        if not self.spec.system_prefix:
+        if not self.spec.user_suffix or not messages:
             return messages
-        if messages and messages[0]["role"] == "system":
-            head = messages[0]
-            return [
-                {"role": "system", "content": self.spec.system_prefix + head["content"]},
-                *messages[1:],
-            ]
-        return [{"role": "system", "content": self.spec.system_prefix.rstrip()}, *messages]
+        # Append the suffix to the last user turn (Qwen3's `/no_think` switch
+        # is recognised there, not in the system prompt).
+        for i in range(len(messages) - 1, -1, -1):
+            if messages[i]["role"] == "user":
+                patched = dict(messages[i])
+                patched["content"] = patched["content"] + self.spec.user_suffix
+                return [*messages[:i], patched, *messages[i + 1 :]]
+        return messages
 
     def complete(
         self,
@@ -130,7 +132,13 @@ class LLM:
             grammar=grammar,
             **kwargs,
         )
-        return json.loads(out["choices"][0]["message"]["content"])
+        raw = out["choices"][0]["message"]["content"]
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError as e:
+            # Almost always max_tokens hit mid-object — surface the raw output
+            # so the caller can bump max_tokens or shrink the schema.
+            raise ValueError(f"grammar-constrained output did not parse: {raw!r}") from e
 
 
 def load_llm(name: str = "qwen3-8b", **overrides: Any) -> LLM:
