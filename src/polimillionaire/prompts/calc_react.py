@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from polimillionaire._vendor.millionaire_client.models import Question
 from polimillionaire.llm import Message
-from polimillionaire.strategies._common import render_question_block
+from polimillionaire.prompts._common import render_question_block
 
 PROMPT_VERSION = "v1"
 

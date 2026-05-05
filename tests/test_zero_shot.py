@@ -10,7 +10,8 @@ from typing import Any, cast
 
 from polimillionaire._vendor.millionaire_client.models import Option, Question
 from polimillionaire.llm import LLM
-from polimillionaire.strategies._common import make_schema, render_question_block
+from polimillionaire.prompts._common import render_question_block
+from polimillionaire.strategies._common import make_schema
 from polimillionaire.strategies.base import Context
 from polimillionaire.strategies.zero_shot import ZeroShotStrategy
 
