@@ -13,6 +13,7 @@ later, add a `complete_with_tools()` method here.
 
 from __future__ import annotations
 
+import atexit
 import gc
 import json
 from dataclasses import dataclass, field
@@ -224,6 +225,16 @@ def unload() -> None:
         _active.unload()
         _active = None
         gc.collect()
+
+
+# Free the model during Python atexit so the Llama instance is released
+# *before* the C runtime tears down the process-wide Metal device. Without
+# this, llama-cpp-python 0.3.22 hits a `GGML_ASSERT([rsets->data count] == 0)`
+# in `ggml_metal_device_free` during `__cxa_finalize_ranges` -- noisy but
+# harmless (DB writes have already flushed). Upstream fix is in flight at
+# https://github.com/ggml-org/llama.cpp/pull/17869; remove this once a
+# llama-cpp-python release with that patch is pinned.
+atexit.register(unload)
 
 
 __all__ = ["LLM", "MODELS", "Message", "ModelSpec", "load_llm", "unload"]
