@@ -25,6 +25,15 @@ llm = [
     "llama-cpp-python>=0.3",
     "huggingface-hub>=0.24",
 ]
+# Optional. Pulls torch + transformers via sentence-transformers (~600 MB)
+# plus faiss for ANN search and `datasets` for the HF corpus loaders.
+# Install with `uv sync --group rag`.
+rag = [
+    "sentence-transformers>=3.0",
+    "faiss-cpu>=1.8",
+    "datasets>=2.20",
+    "numpy>=1.26",
+]
 
 [build-system]
 requires = ["hatchling"]
