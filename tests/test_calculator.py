@@ -10,13 +10,31 @@ def test_calc_integer_arithmetic() -> None:
     assert calc("2 + 2").startswith("4")
 
 
-def test_calc_irrational_returns_decimal_expansion() -> None:
+def test_calc_irrational_returns_symbolic_and_decimal() -> None:
+    # Symbolic form lets the model match against `sqrt(2)`-shaped options
+    # without doing the conversion mentally.
     out = calc("sqrt(2)")
-    assert out.startswith("1.41421356")
+    assert "sqrt(2)" in out
+    assert "1.41421356" in out
 
 
-def test_calc_rational_evalfs_to_decimal() -> None:
-    assert calc("1/3").startswith("0.333333")
+def test_calc_rational_returns_symbolic_and_decimal() -> None:
+    out = calc("1/3")
+    assert "1/3" in out
+    assert "0.333333" in out
+
+
+def test_calc_simplifies_rational_to_lowest_terms() -> None:
+    # Rational(27, 99) must come back as 3/11 so the model can match it
+    # against an option spelled `3/11`.
+    out = calc("Rational(27, 99)")
+    assert "3/11" in out
+    assert "0.27272" in out
+
+
+def test_calc_solves_quadratic_via_solve() -> None:
+    out = calc("solve(x**2 - 5*x + 6, x)")
+    assert "[2, 3]" in out
 
 
 def test_calc_factorial() -> None:
