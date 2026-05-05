@@ -212,11 +212,10 @@ _EXEMPLARS: list[list[Message]] = [
 ]
 
 
-def _flatten_exemplars() -> list[Message]:
-    flat: list[Message] = []
-    for ex in _EXEMPLARS:
-        flat.extend(ex)
-    return flat
+# Public so RAG-augmented variants can splice these in without re-listing
+# the whole exemplar set. They teach the action JSON format -- the
+# RAG-retrieved reference solutions teach the math pattern.
+EXEMPLAR_MESSAGES: list[Message] = [m for ex in _EXEMPLARS for m in ex]
 
 
 def render(question: Question) -> list[Message]:
@@ -226,6 +225,6 @@ def render(question: Question) -> list[Message]:
     """
     return [
         {"role": "system", "content": SYSTEM},
-        *_flatten_exemplars(),
+        *EXEMPLAR_MESSAGES,
         {"role": "user", "content": render_question_block(question)},
     ]
