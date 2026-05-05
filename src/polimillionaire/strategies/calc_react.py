@@ -29,11 +29,12 @@ class CalcReactStrategy:
     strategy_name = "calc_react"
     prompt_version = prompt.PROMPT_VERSION
 
-    def __init__(self, llm: LLM, *, max_steps: int = 3) -> None:
+    def __init__(self, llm: LLM, *, max_steps: int = 3, verbose: bool = False) -> None:
         if max_steps < 1:
             raise ValueError(f"max_steps must be >= 1, got {max_steps}")
         self._llm = llm
         self._max_steps = max_steps
+        self._verbose = verbose
 
     @property
     def model_name(self) -> str:
@@ -51,11 +52,15 @@ class CalcReactStrategy:
                 # Output blew through max_tokens and didn't parse as JSON.
                 # Skip remaining steps and force an answer with whatever
                 # context we have so the game continues.
+                if self._verbose:
+                    print("   [calc-react] action step failed to parse — forcing answer")
                 break
             if out["action"] == "answer":
                 return self._decision(out, start)
             expression = out["expression"]
             result = calc(expression)
+            if self._verbose:
+                print(f'   [calc-react] calc("{expression}") -> {result}')
             messages.append({"role": "assistant", "content": json.dumps(out)})
             messages.append({"role": "user", "content": f"Calculator: `{expression}` = {result}"})
 
@@ -68,6 +73,8 @@ class CalcReactStrategy:
         except ValueError:
             # Even the forced answer didn't parse. Default to the first option
             # at zero confidence so the game submits *something* and continues.
+            if self._verbose:
+                print("   [calc-react] forced answer also failed — defaulting to option 0")
             return self._decision(
                 {
                     "action": "answer",

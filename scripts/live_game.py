@@ -22,10 +22,10 @@ from polimillionaire.strategies import CalcReactStrategy, ZeroShotStrategy
 
 # --- config -----------------------------------------------------------------
 
-COMPETITION_ID = 2  # set to whichever competition you want to play
+COMPETITION_ID = 3  # set to whichever competition you want to play
 MODEL_NAME = "qwen3-8b"
 STRATEGY_KIND = "calc_react"  # "calc_react" or "zero_shot"
-MAX_GAMES = 1
+MAX_GAMES = 2
 MAX_STEPS = 3  # calc_react only: tool calls before forced answer
 
 # ----------------------------------------------------------------------------
@@ -33,7 +33,7 @@ MAX_STEPS = 3  # calc_react only: tool calls before forced answer
 
 def make_strategy(llm):
     if STRATEGY_KIND == "calc_react":
-        return CalcReactStrategy(llm, max_steps=MAX_STEPS)
+        return CalcReactStrategy(llm, max_steps=MAX_STEPS, verbose=True)
     if STRATEGY_KIND == "zero_shot":
         return ZeroShotStrategy(llm)
     raise ValueError(f"unknown STRATEGY_KIND: {STRATEGY_KIND!r}")
