@@ -19,11 +19,15 @@ from polimillionaire.strategies.calc_react import CalcReactStrategy
 
 
 class _ScriptedLLM:
-    """Fake LLM that returns canned responses in order, recording every call."""
+    """Fake LLM that returns canned responses in order, recording every call.
+
+    A response of `ValueError(...)` is *raised* instead of returned, so we can
+    simulate `complete_json` failing to parse the model's output.
+    """
 
     name = "fake-model"
 
-    def __init__(self, responses: list[dict[str, Any]]) -> None:
+    def __init__(self, responses: list[dict[str, Any] | ValueError]) -> None:
         self._responses = list(responses)
         self.calls: list[tuple[list[dict[str, str]], dict[str, Any]]] = []
 
@@ -33,7 +37,10 @@ class _ScriptedLLM:
         self.calls.append(([dict(m) for m in messages], schema))
         if not self._responses:
             raise AssertionError("script exhausted: strategy made an unexpected extra call")
-        return self._responses.pop(0)
+        head = self._responses.pop(0)
+        if isinstance(head, ValueError):
+            raise head
+        return head
 
 
 def _make_question() -> Question:
@@ -160,3 +167,44 @@ def test_strategy_rejects_zero_max_steps() -> None:
     fake = _ScriptedLLM([])
     with pytest.raises(ValueError, match="max_steps"):
         CalcReactStrategy(cast(LLM, fake), max_steps=0)
+
+
+def test_strategy_recovers_when_action_step_overflows_max_tokens() -> None:
+    """Regression for the i^259 sum crash: when an action-step output blows
+    through max_tokens and complete_json raises ValueError, the strategy must
+    skip remaining steps and force an answer rather than killing the game."""
+    fake = _ScriptedLLM(
+        [
+            ValueError("grammar-constrained output did not parse: ..."),
+            # Forced-answer call (answer-only schema) succeeds.
+            {"rationale": "fallback", "confidence": 0.3, "answer_id": 1},
+        ]
+    )
+    strategy = CalcReactStrategy(cast(LLM, fake))
+    decision = strategy(_make_question(), Context(competition_id=0, level=2))
+
+    assert len(fake.calls) == 2
+    assert decision.option_id == 1
+
+    # Forced-answer call must use the answer-only schema.
+    forced_schema = fake.calls[-1][1]
+    assert "oneOf" not in forced_schema
+
+
+def test_strategy_falls_back_to_first_option_when_forced_answer_also_fails() -> None:
+    """Last-resort: if even the answer-only schema fails to parse, return a
+    valid AnswerDecision pointing at the first option (confidence 0) so the
+    game submits *something* and continues to the next question."""
+    fake = _ScriptedLLM(
+        [
+            ValueError("grammar-constrained output did not parse: ..."),
+            ValueError("grammar-constrained output did not parse: ..."),
+        ]
+    )
+    strategy = CalcReactStrategy(cast(LLM, fake))
+    question = _make_question()
+    decision = strategy(question, Context(competition_id=0, level=2))
+
+    assert decision.option_id == question.options[0].id
+    assert decision.confidence == 0.0
+    assert decision.rationale and "fail" in decision.rationale.lower()

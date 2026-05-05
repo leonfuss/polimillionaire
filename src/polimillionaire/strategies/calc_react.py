@@ -45,7 +45,13 @@ class CalcReactStrategy:
         start = time.perf_counter()
 
         for _ in range(self._max_steps):
-            out = self._llm.complete_json(messages, action_schema)
+            try:
+                out = self._llm.complete_json(messages, action_schema)
+            except ValueError:
+                # Output blew through max_tokens and didn't parse as JSON.
+                # Skip remaining steps and force an answer with whatever
+                # context we have so the game continues.
+                break
             if out["action"] == "answer":
                 return self._decision(out, start)
             expression = out["expression"]
@@ -53,11 +59,24 @@ class CalcReactStrategy:
             messages.append({"role": "assistant", "content": json.dumps(out)})
             messages.append({"role": "user", "content": f"Calculator: `{expression}` = {result}"})
 
-        # Step cap hit — force a commit by swapping in the answer-only schema.
+        # Step cap hit OR parse failure — force a commit on the answer-only schema.
         messages.append(
             {"role": "user", "content": "Step limit reached. Answer now using the answer schema."}
         )
-        out = self._llm.complete_json(messages, make_schema(question))
+        try:
+            out = self._llm.complete_json(messages, make_schema(question))
+        except ValueError:
+            # Even the forced answer didn't parse. Default to the first option
+            # at zero confidence so the game submits *something* and continues.
+            return self._decision(
+                {
+                    "action": "answer",
+                    "rationale": "Model output failed to parse; defaulting to first option.",
+                    "answer_id": question.options[0].id,
+                    "confidence": 0.0,
+                },
+                start,
+            )
         return self._decision({"action": "answer", **out}, start)
 
     def _decision(self, out: dict, start: float) -> AnswerDecision:
