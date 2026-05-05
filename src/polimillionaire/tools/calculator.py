@@ -47,7 +47,11 @@ def calc(expression: str) -> str:
     """
     try:
         expr = sympy.sympify(expression, evaluate=True)
-    except (sympy.SympifyError, SyntaxError, TypeError, ValueError, AttributeError) as e:
+    except Exception as e:  # noqa: BLE001 -- sandbox boundary, must never raise
+        # sympy raises across many submodule-specific exception types
+        # (SympifyError, OptionError, PolynomialError, ...) which don't
+        # share a common base. Catching narrowly leaks novel ones up
+        # through the calc-react loop and crashes the run.
         return f"ERROR: {type(e).__name__}: {e}"
 
     # solve(), Sum(), etc. return Python lists/tuples — render as-is.
@@ -61,7 +65,7 @@ def calc(expression: str) -> str:
 
     try:
         numeric = expr.evalf()
-    except (TypeError, ValueError, AttributeError) as e:
+    except Exception as e:  # noqa: BLE001 -- sandbox boundary, must never raise
         return f"ERROR: {type(e).__name__}: {e}"
 
     # Pure numeric: only show decimal — symbolic form is just the same number.

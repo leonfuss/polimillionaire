@@ -64,6 +64,18 @@ def test_calc_invalid_expression_returns_error_string() -> None:
     assert out.startswith("ERROR:")
 
 
+def test_calc_unknown_sympy_error_subclass_returns_error_string() -> None:
+    """Regression: the model emitted `factor(x**4 + 4, domain='Z5')` during
+    a replay; sympy raised `polyerrors.OptionError`, which the previous
+    narrow except list didn't catch, killing the whole replay run.
+
+    The calculator is a sandbox -- *any* sympy failure must come back as
+    a string the model can read on the next turn, regardless of which
+    sympy submodule's exception hierarchy it came from."""
+    out = calc("factor(x**4 + 4, domain='Z5')")
+    assert out.startswith("ERROR:")
+
+
 def test_calc_rejects_arbitrary_python() -> None:
     # sympify must not let the model exec import statements / attribute access.
     out = calc("__import__('os').system('echo pwned')")
