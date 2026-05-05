@@ -50,3 +50,38 @@ def make_schema(question: Question, *, include_rationale: bool = True) -> dict[s
         "required": required,
         "additionalProperties": False,
     }
+
+
+def make_action_schema(question: Question) -> dict[str, Any]:
+    """Schema for a ReAct-style step: either call a tool, or commit to an answer.
+
+    Top-level `oneOf` with a `const`-typed `action` discriminator. The answer
+    branch mirrors `make_schema` (rationale first, then confidence, then
+    `answer_id` constrained to this question's option ids) so the eval/replay
+    layer sees identical fields regardless of which strategy produced them.
+    """
+    option_ids = [opt.id for opt in question.options]
+    return {
+        "oneOf": [
+            {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "const": "calculate"},
+                    "expression": {"type": "string"},
+                },
+                "required": ["action", "expression"],
+                "additionalProperties": False,
+            },
+            {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "const": "answer"},
+                    "rationale": {"type": "string"},
+                    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                    "answer_id": {"type": "integer", "enum": option_ids},
+                },
+                "required": ["action", "rationale", "confidence", "answer_id"],
+                "additionalProperties": False,
+            },
+        ]
+    }
