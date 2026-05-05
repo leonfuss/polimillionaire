@@ -43,13 +43,27 @@ CREATE TABLE IF NOT EXISTS predictions (
     prompt_version              TEXT    NOT NULL,
     confidence                  REAL,
     rationale                   TEXT,
-    latency_ms                  INTEGER NOT NULL
+    latency_ms                  INTEGER NOT NULL,
+    -- 1 if `correct_option_id_if_known` was filled in by us reasoning
+    -- about the question rather than confirmed by the server's "correct"
+    -- response. Lets eval/replay weight or filter generated ground truth.
+    generated_answer            INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_predictions_question_id ON predictions(question_id);
 CREATE INDEX IF NOT EXISTS idx_predictions_competition ON predictions(competition_id);
 CREATE INDEX IF NOT EXISTS idx_predictions_timestamp   ON predictions(timestamp);
 """
+
+
+def _migrate(con: sqlite3.Connection) -> None:
+    """Idempotent migrations for DBs created before a column was added."""
+    cur = con.execute("PRAGMA table_info(predictions)")
+    cols = {row[1] for row in cur.fetchall()}
+    if "generated_answer" not in cols:
+        con.execute(
+            "ALTER TABLE predictions ADD COLUMN generated_answer INTEGER NOT NULL DEFAULT 0"
+        )
 
 
 @dataclass(frozen=True)
@@ -69,6 +83,9 @@ class PredictionRecord:
     confidence: float | None
     rationale: str | None
     latency_ms: int
+    # True iff `correct_option_id_if_known` was filled in by reasoning rather
+    # than server confirmation. Live play always sets this False.
+    generated_answer: bool = False
 
 
 class QuestionLog:
@@ -79,6 +96,7 @@ class QuestionLog:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as con:
             con.executescript(SCHEMA)
+            _migrate(con)
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -98,8 +116,9 @@ class QuestionLog:
                   (timestamp, account_username, session_id, competition_id, level,
                    question_id, question_text, options_json, predicted_option_id,
                    correct_option_id_if_known, strategy_name, model_name,
-                   prompt_version, confidence, rationale, latency_ms)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   prompt_version, confidence, rationale, latency_ms,
+                   generated_answer)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     datetime.now(UTC).isoformat(),
@@ -118,6 +137,7 @@ class QuestionLog:
                     rec.confidence,
                     rec.rationale,
                     rec.latency_ms,
+                    int(rec.generated_answer),
                 ),
             )
 

@@ -8,11 +8,29 @@ logging the same `predictions` schema so replay/eval works uniformly.
 
 from __future__ import annotations
 
+import os
 import time
+from pathlib import Path
 
 from polimillionaire._vendor.millionaire_client import MillionaireClient
 from polimillionaire.recording import PredictionRecord, QuestionLog
 from polimillionaire.strategies.base import Context, Strategy
+
+# Project root: <repo>/src/polimillionaire/play.py -> three parents up.
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+
+
+def _resolve_db_path(db_path: str | None) -> str:
+    """Pick a DB path and anchor it to the project root if relative.
+
+    Without this, calling auto_play_loop from a subdirectory (e.g.
+    `scripts/`) wrote `data/questions.sqlite` next to the cwd, splitting
+    the corpus across one log per launch directory. Now relative paths --
+    including the default -- always land at <project_root>/data/...
+    """
+    raw = db_path or os.environ.get("POLIMILLIONAIRE_DB_PATH") or "data/questions.sqlite"
+    p = Path(raw)
+    return str(p if p.is_absolute() else _PROJECT_ROOT / p)
 
 
 def manual_play_loop(
@@ -25,10 +43,9 @@ def manual_play_loop(
 
     At each prompt, type the option id (or `q` to abort cleanly).
     Picks up the DB path from `POLIMILLIONAIRE_DB_PATH` if `db_path` is None.
+    Relative paths anchor to the project root (not cwd).
     """
-    import os
-
-    log = QuestionLog(db_path or os.environ.get("POLIMILLIONAIRE_DB_PATH", "data/questions.sqlite"))
+    log = QuestionLog(_resolve_db_path(db_path))
 
     for game_num in range(max_games):
         game = client.game.start(competition_id=competition_id)
@@ -110,10 +127,9 @@ def auto_play_loop(
     Returns a small summary dict (`{"correct": int, "wrong": int, "timeouts": int}`)
     so callers can sanity-check accuracy without opening the DB.
     Picks up the DB path from `POLIMILLIONAIRE_DB_PATH` if `db_path` is None.
+    Relative paths anchor to the project root (not cwd).
     """
-    import os
-
-    log = QuestionLog(db_path or os.environ.get("POLIMILLIONAIRE_DB_PATH", "data/questions.sqlite"))
+    log = QuestionLog(_resolve_db_path(db_path))
     summary = {"correct": 0, "wrong": 0, "timeouts": 0}
 
     for game_num in range(max_games):
