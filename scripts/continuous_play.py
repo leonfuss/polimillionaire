@@ -28,11 +28,16 @@ from __future__ import annotations
 
 import time
 import traceback
+from pathlib import Path
 
 from polimillionaire import load_llm, make_client
 from polimillionaire.llm import LLM
 from polimillionaire.play import auto_play_loop
-from polimillionaire.strategies import CalcReactStrategy, ZeroShotStrategy
+from polimillionaire.strategies import (
+    CalcReactStrategy,
+    RagCalcReactStrategy,
+    ZeroShotStrategy,
+)
 from polimillionaire.strategies.base import Strategy
 
 # --- config -----------------------------------------------------------------
@@ -42,13 +47,39 @@ COMPETITION_IDS = [0, 1, 2, 3]  # rotate to fill all four categories
 MATH_COMPETITION_ID = 3  # the only category that gets calc-react
 BREAK_SECONDS = 20  # pause between games
 MAX_STEPS = 3  # calc_react only
+RAG_K = 3  # retrieved exemplars per math question (rag_calc_react only)
+
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+MATH_INDEX_DIR = _PROJECT_ROOT / "data" / "index" / "math"
 
 # ----------------------------------------------------------------------------
 
 
-def make_strategy(llm: LLM, competition_id: int) -> Strategy:
-    """Calc-react for Maths, zero-shot for everything else."""
+def _load_math_retriever():
+    """Return a `Retriever` over the math index, or `None` if not built yet.
+
+    Lazily imports the retrieval module so missing `[rag]` deps don't
+    break this script when math RAG isn't being used.
+    """
+    if not MATH_INDEX_DIR.exists():
+        return None
+    try:
+        from polimillionaire.retrieval import Retriever
+
+        return Retriever(MATH_INDEX_DIR)
+    except Exception as exc:  # noqa: BLE001 -- fall back to plain calc-react
+        print(f"!! math retriever unavailable ({type(exc).__name__}: {exc}); using calc-react")
+        return None
+
+
+def make_strategy(llm: LLM, competition_id: int, retriever=None) -> Strategy:
+    """RAG-calc-react for Maths if an index is loaded, else plain calc-react.
+
+    Zero-shot for the other competitions until the Wikipedia index lands.
+    """
     if competition_id == MATH_COMPETITION_ID:
+        if retriever is not None:
+            return RagCalcReactStrategy(llm, retriever, k=RAG_K, max_steps=MAX_STEPS)
         return CalcReactStrategy(llm, max_steps=MAX_STEPS)
     return ZeroShotStrategy(llm)
 
@@ -56,6 +87,11 @@ def make_strategy(llm: LLM, competition_id: int) -> Strategy:
 def main() -> None:
     print(f"loading {MODEL_NAME}...")
     llm = load_llm(MODEL_NAME)
+    retriever = _load_math_retriever()
+    if retriever is not None:
+        print(f"math retriever loaded ({len(retriever)} problems)")
+    else:
+        print(f"no math index at {MATH_INDEX_DIR} — math falls back to plain calc-react")
     print(f"model={MODEL_NAME}, rotating competitions {COMPETITION_IDS}")
     print("Ctrl-C to stop.\n")
 
@@ -63,7 +99,7 @@ def main() -> None:
     errors = 0
     while True:
         comp_id = COMPETITION_IDS[games % len(COMPETITION_IDS)]
-        strategy = make_strategy(llm, comp_id)
+        strategy = make_strategy(llm, comp_id, retriever=retriever)
         print(
             f">>> game #{games + 1}, competition={comp_id}, "
             f"strategy={strategy.strategy_name} (errors so far: {errors})"
