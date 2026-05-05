@@ -6,30 +6,63 @@ import argparse
 import json
 import sqlite3
 from pathlib import Path
+from typing import Any
 
 from polimillionaire._vendor.millionaire_client.models import Option, Question
 from polimillionaire.strategies.base import AnswerDecision, Context, Strategy
 
+# Stable enough to inline rather than fetch from the API (which would require
+# auth just to render a CLI summary). Sourced from the README.
+COMPETITION_NAMES: dict[int, str] = {
+    0: "Entertainment",
+    1: "Ancient History and Politics",
+    2: "Science and Nature",
+    3: "Maths",
+}
+
 
 def replay(strategy: Strategy, log_path: str | Path) -> dict:
-    """Run `strategy` over every question in the log that has a known answer."""
+    """Run `strategy` over every question in the log that has a known answer.
+
+    Returns combined accuracy with a `by_competition` breakdown, plus two
+    sub-views over the same shape:
+      - `hand_labeled`: rows where `generated_answer = 1` (we reasoned the
+        answer; ground truth is opinion, not server-confirmed).
+      - `server_confirmed`: rows where `generated_answer = 0` (the server
+        said "correct" at play time; ground truth is gold).
+    Splitting these lets us see whether accuracy is driven by easy
+    server-confirmed questions or holds up on the harder hand-labelled set.
+    """
     path = Path(log_path)
     if not path.exists():
         raise FileNotFoundError(f"No question log at {path}")
 
     with sqlite3.connect(path) as con:
         con.row_factory = sqlite3.Row
+        # GROUP BY collapses the multiple prediction rows per question to one
+        # eval row. MAX(generated_answer) means: if a question was ever
+        # hand-labelled, treat it as hand-labelled (in practice the flag is
+        # consistent per question; this is just defence in depth).
         cur = con.execute(
             """
-            SELECT DISTINCT question_id, question_text, options_json, level,
-                            competition_id, correct_option_id_if_known
+            SELECT question_id,
+                   MAX(question_text)              AS question_text,
+                   MAX(options_json)               AS options_json,
+                   MAX(level)                      AS level,
+                   competition_id,
+                   MAX(correct_option_id_if_known) AS correct_option_id_if_known,
+                   MAX(generated_answer)           AS generated_answer
             FROM predictions
             WHERE correct_option_id_if_known IS NOT NULL
+            GROUP BY question_id, competition_id
             """
         )
         rows = cur.fetchall()
 
-    correct = 0
+    combined = _empty_bucket()
+    hand_labeled = _empty_bucket()
+    server_confirmed = _empty_bucket()
+
     for row in rows:
         options = [Option(**o) for o in json.loads(row["options_json"])]
         question = Question(
@@ -39,11 +72,83 @@ def replay(strategy: Strategy, log_path: str | Path) -> dict:
             level=row["level"],
         )
         ctx = Context(competition_id=row["competition_id"], level=row["level"])
-        if strategy(question, ctx).option_id == row["correct_option_id_if_known"]:
-            correct += 1
+        is_right = strategy(question, ctx).option_id == row["correct_option_id_if_known"]
 
-    total = len(rows)
-    return {"correct": correct, "total": total, "accuracy": correct / total if total else 0.0}
+        comp_id = row["competition_id"]
+        _record(combined, comp_id, is_right)
+        if row["generated_answer"]:
+            _record(hand_labeled, comp_id, is_right)
+        else:
+            _record(server_confirmed, comp_id, is_right)
+
+    result = _finalize(combined)
+    result["hand_labeled"] = _finalize(hand_labeled)
+    result["server_confirmed"] = _finalize(server_confirmed)
+    return result
+
+
+def print_summary(results: dict) -> None:
+    """Pretty-print replay results: combined, hand-labelled, server-confirmed."""
+    _print_table("combined", results)
+    _print_table("hand-labelled", results["hand_labeled"])
+    _print_table("server-confirmed", results["server_confirmed"])
+
+
+def _empty_bucket() -> dict[str, Any]:
+    return {"correct": 0, "total": 0, "by_comp": {}}
+
+
+def _record(bucket: dict[str, Any], comp_id: int, is_right: bool) -> None:
+    bucket["total"] += 1
+    if is_right:
+        bucket["correct"] += 1
+    sub = bucket["by_comp"].setdefault(comp_id, {"correct": 0, "total": 0})
+    sub["total"] += 1
+    if is_right:
+        sub["correct"] += 1
+
+
+def _finalize(bucket: dict[str, Any]) -> dict[str, Any]:
+    total = bucket["total"]
+    return {
+        "correct": bucket["correct"],
+        "total": total,
+        "accuracy": bucket["correct"] / total if total else 0.0,
+        "by_competition": {
+            cid: {
+                "name": COMPETITION_NAMES.get(cid, f"competition_{cid}"),
+                "correct": s["correct"],
+                "total": s["total"],
+                "accuracy": s["correct"] / s["total"] if s["total"] else 0.0,
+            }
+            for cid, s in sorted(bucket["by_comp"].items())
+        },
+    }
+
+
+def _print_table(label: str, totals: dict) -> None:
+    print(f"=== {label} ({totals['total']} rows) ===")
+    rows = list(totals["by_competition"].values())
+    if not rows:
+        print("(no rows)\n")
+        return
+    name_width = max(max(len(r["name"]) for r in rows), len("competition"), len("overall"))
+    header = f"{'competition':<{name_width}}  {'correct':>7} / {'total':<5}  {'accuracy':>8}"
+    print(header)
+    print("-" * len(header))
+    for stats in rows:
+        print(
+            f"{stats['name']:<{name_width}}  "
+            f"{stats['correct']:>7} / {stats['total']:<5}  "
+            f"{stats['accuracy']:>7.1%}"
+        )
+    print("-" * len(header))
+    print(
+        f"{'overall':<{name_width}}  "
+        f"{totals['correct']:>7} / {totals['total']:<5}  "
+        f"{totals['accuracy']:>7.1%}"
+    )
+    print()
 
 
 def _smoke() -> None:
@@ -56,7 +161,7 @@ def _smoke() -> None:
     if not log_path.exists():
         print(f"No log at {log_path} yet. Run a live game first to populate it.")
         return
-    print(replay(always_zero, log_path))
+    print_summary(replay(always_zero, log_path))
 
 
 def main() -> None:
