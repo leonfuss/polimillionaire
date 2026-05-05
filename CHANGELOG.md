@@ -3,6 +3,17 @@
 What we tried, what we learned, why we changed it. Newest first.
 Pairs with git history but reads like notes — the *why*, not the diff.
 
+## 2026-05-05 — `generated_answer` column on the predictions table
+Added a boolean `generated_answer` column. Live play always sets it
+False. We then filled in `correct_option_id_if_known` for the 10
+questions the model got wrong (no server validation = no ground truth)
+by hand-reasoning the answers, and flagged each one `generated_answer = 1`.
+DB now has 54/54 rows with a known answer (44 server-validated + 10
+generated). The flag lets future replay/eval code distinguish or weight
+generated truth so we don't optimise toward our own reasoning errors.
+Schema migration runs idempotently in `QuestionLog.__init__` for
+pre-existing DBs.
+
 ## 2026-05-05 — Calc output capped at 600 chars
 A live-run question (`|a+b+c|` cubic system, G2L5) had the model invoke
 the right thing — `solve([...], (a,b,c))` — but sympy returned 16
