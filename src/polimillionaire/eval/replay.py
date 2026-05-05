@@ -21,8 +21,22 @@ COMPETITION_NAMES: dict[int, str] = {
 }
 
 
-def replay(strategy: Strategy, log_path: str | Path) -> dict:
+def replay(
+    strategy: Strategy,
+    log_path: str | Path,
+    *,
+    competition_id: int | None = None,
+    show_progress: bool = False,
+) -> dict:
     """Run `strategy` over every question in the log that has a known answer.
+
+    `competition_id`, if set, restricts the replay to that single competition
+    (0-3). When `None`, every labelled question is replayed regardless of
+    category.
+
+    `show_progress=True` renders a tqdm progress bar with running accuracy
+    in the postfix. Off by default so library callers (and the smoke test)
+    stay silent.
 
     Returns combined accuracy with a `by_competition` breakdown, plus two
     sub-views over the same shape:
@@ -43,8 +57,7 @@ def replay(strategy: Strategy, log_path: str | Path) -> dict:
         # eval row. MAX(generated_answer) means: if a question was ever
         # hand-labelled, treat it as hand-labelled (in practice the flag is
         # consistent per question; this is just defence in depth).
-        cur = con.execute(
-            """
+        sql = """
             SELECT question_id,
                    MAX(question_text)              AS question_text,
                    MAX(options_json)               AS options_json,
@@ -54,16 +67,30 @@ def replay(strategy: Strategy, log_path: str | Path) -> dict:
                    MAX(generated_answer)           AS generated_answer
             FROM predictions
             WHERE correct_option_id_if_known IS NOT NULL
-            GROUP BY question_id, competition_id
             """
-        )
+        params: list = []
+        if competition_id is not None:
+            sql += " AND competition_id = ? "
+            params.append(competition_id)
+        sql += " GROUP BY question_id, competition_id"
+        cur = con.execute(sql, params)
         rows = cur.fetchall()
 
     combined = _empty_bucket()
     hand_labeled = _empty_bucket()
     server_confirmed = _empty_bucket()
 
-    for row in rows:
+    iterable: Any = rows
+    pbar = None
+    if show_progress:
+        # Imported lazily so the eval module stays importable on a base
+        # install (tqdm is pulled in transitively by the `[rag]` group).
+        from tqdm import tqdm
+
+        pbar = tqdm(rows, desc="replay", unit="q")
+        iterable = pbar
+
+    for row in iterable:
         options = [Option(**o) for o in json.loads(row["options_json"])]
         question = Question(
             id=row["question_id"],
@@ -80,6 +107,17 @@ def replay(strategy: Strategy, log_path: str | Path) -> dict:
             _record(hand_labeled, comp_id, is_right)
         else:
             _record(server_confirmed, comp_id, is_right)
+
+        if pbar is not None:
+            pbar.set_postfix(
+                comp=comp_id,
+                lvl=row["level"],
+                acc=f"{combined['correct'] / combined['total']:.0%}",
+                refresh=False,
+            )
+
+    if pbar is not None:
+        pbar.close()
 
     result = _finalize(combined)
     result["hand_labeled"] = _finalize(hand_labeled)
