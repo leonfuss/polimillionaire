@@ -37,6 +37,20 @@ def test_calc_solves_quadratic_via_solve() -> None:
     assert "[2, 3]" in out
 
 
+def test_calc_truncates_pathologically_large_results() -> None:
+    """Regression: a cubic system whose `solve(...)` returned 16 solutions
+    with massive complex symbolic forms produced a tens-of-thousands-of-chars
+    string, which swamped the next LLM prompt and crashed the calc-react
+    loop. Output must be capped so the loop survives."""
+    # Three-variable cubic system with many solutions -- mirrors the real
+    # G2L5 trigger from the live run.
+    out = calc("solve([a*(a+2*b) - 104/3, b*(b+2*c) - 7/9, c*(c+2*a) + 7], (a, b, c))")
+    assert "truncated" in out
+    # The leading rational solutions are still visible, which is what the
+    # model needs to compute |a + b + c|.
+    assert "(-4, -7/3, 1)" in out or "(4, 7/3, -1)" in out
+
+
 def test_calc_factorial() -> None:
     assert calc("factorial(10)").startswith("3628800")
 

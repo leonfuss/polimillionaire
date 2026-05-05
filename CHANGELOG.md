@@ -3,6 +3,16 @@
 What we tried, what we learned, why we changed it. Newest first.
 Pairs with git history but reads like notes — the *why*, not the diff.
 
+## 2026-05-05 — Calc output capped at 600 chars
+A live-run question (`|a+b+c|` cubic system, G2L5) had the model invoke
+the right thing — `solve([...], (a,b,c))` — but sympy returned 16
+solutions including massive complex symbolic forms (tens of thousands of
+chars). The result swamped the next LLM prompt, `complete_json` couldn't
+produce valid JSON, and the resilience layer fell through to "default
+to option 0" — losing $500 on a question whose first two solutions
+(`(-4, -7/3, 1)`, `(4, 7/3, -1)`) were the answer. Cap output at
+`MAX_OUTPUT_CHARS = 600`; leading real solutions stay visible.
+
 ## 2026-05-05 — calc-react v2 prompt + symbolic calc output
 Added four hand-crafted few-shot exemplars (inclusion-exclusion counting,
 `LCM × GCD = a × b`, repeating-decimal via `Rational(...)`, quadratic

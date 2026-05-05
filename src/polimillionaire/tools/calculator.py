@@ -10,6 +10,12 @@ shown alongside the decimal -- e.g. `Rational(27, 99)` returns
 options without doing the simplification in its head. Pure numeric results
 (Integer, Float) return the decimal alone.
 
+Output is capped at `MAX_OUTPUT_CHARS` so that pathologically large results
+(e.g. a cubic system whose `solve(...)` returns 16 solutions including
+massive complex symbolic forms) don't swamp the next LLM prompt and crash
+the calc-react loop. The first N chars typically still contain the real /
+rational solutions, which are what the model needs.
+
 We deliberately use `sympy.sympify` rather than `eval`: sympify's parser
 rejects arbitrary Python (no imports, no attribute access, no calls outside
 sympy's allow-list) so a malformed or hostile expression fails closed.
@@ -18,6 +24,14 @@ sympy's allow-list) so a malformed or hostile expression fails closed.
 from __future__ import annotations
 
 import sympy
+
+MAX_OUTPUT_CHARS = 600
+
+
+def _cap(s: str) -> str:
+    if len(s) <= MAX_OUTPUT_CHARS:
+        return s
+    return s[:MAX_OUTPUT_CHARS] + f"... [truncated; original length {len(s)} chars]"
 
 
 def calc(expression: str) -> str:
@@ -41,7 +55,7 @@ def calc(expression: str) -> str:
     # arbitrary Python (e.g. `__import__("os").system(...)` returns int 0);
     # admitting only sympy objects + list/tuple keeps that exfiltration shut.
     if isinstance(expr, list | tuple):
-        return str(expr)
+        return _cap(str(expr))
     if not isinstance(expr, sympy.Basic):
         return f"ERROR: unexpected non-sympy result: {type(expr).__name__}"
 
@@ -52,8 +66,8 @@ def calc(expression: str) -> str:
 
     # Pure numeric: only show decimal — symbolic form is just the same number.
     if getattr(expr, "is_Integer", False) or getattr(expr, "is_Float", False):
-        return str(numeric)
+        return _cap(str(numeric))
 
     # Symbolic: show both forms so the model can match against fraction /
     # surd / pi options without doing the simplification mentally.
-    return f"{expr} = {numeric}"
+    return _cap(f"{expr} = {numeric}")
