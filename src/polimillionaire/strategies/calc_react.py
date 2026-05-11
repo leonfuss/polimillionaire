@@ -8,15 +8,11 @@ the answer-only schema, forcing a commit.
 
 from __future__ import annotations
 
-import json
-import time
-
 from polimillionaire._vendor.millionaire_client.models import Question
-from polimillionaire.llm import LLM, Message
+from polimillionaire.llm import LLM
 from polimillionaire.prompts import calc_react as prompt
-from polimillionaire.strategies._common import build_decision, make_action_schema, make_schema
+from polimillionaire.strategies._common import run_react_loop
 from polimillionaire.strategies.base import AnswerDecision, Context
-from polimillionaire.tools import calc
 
 
 class CalcReactStrategy:
@@ -57,55 +53,15 @@ class CalcReactStrategy:
         return self._variant.version
 
     def __call__(self, question: Question, ctx: Context) -> AnswerDecision:  # noqa: ARG002
-        messages: list[Message] = list(self._variant.render(question))
-        action_schema = make_action_schema(question)
-        start = time.perf_counter()
-
-        for _ in range(self._max_steps):
-            try:
-                out = self._llm.complete_json(messages, action_schema)
-            except ValueError:
-                # Output blew through max_tokens and didn't parse as JSON.
-                # Skip remaining steps and force an answer with whatever
-                # context we have so the game continues.
-                if self._verbose:
-                    print("   [calc-react] action step failed to parse — forcing answer")
-                break
-            if out["action"] == "answer":
-                return self._build(out, start)
-            expression = out["expression"]
-            result = calc(expression)
-            if self._verbose:
-                print(f'   [calc-react] calc("{expression}") -> {result}')
-            messages.append({"role": "assistant", "content": json.dumps(out)})
-            messages.append({"role": "user", "content": f"Calculator: `{expression}` = {result}"})
-
-        # Step cap hit OR parse failure — force a commit on the answer-only schema.
-        messages.append(
-            {"role": "user", "content": "Step limit reached. Answer now using the answer schema."}
-        )
-        try:
-            out = self._llm.complete_json(messages, make_schema(question))
-        except ValueError:
-            # Even the forced answer didn't parse. Default to the first option
-            # at zero confidence so the game submits *something* and continues.
-            if self._verbose:
-                print("   [calc-react] forced answer also failed — defaulting to option 0")
-            return self._build(
-                {
-                    "rationale": "Model output failed to parse; defaulting to first option.",
-                    "answer_id": question.options[0].id,
-                    "confidence": 0.0,
-                },
-                start,
-            )
-        return self._build(out, start)
-
-    def _build(self, out: dict, start: float) -> AnswerDecision:
-        return build_decision(
-            out,
-            start,
+        messages = list(self._variant.render(question))
+        return run_react_loop(
+            self._llm,
+            messages,
+            question,
+            max_steps=self._max_steps,
             model_name=self.model_name,
             strategy_name=self.strategy_name,
             prompt_version=self.prompt_version,
+            verbose=self._verbose,
+            log_prefix="calc-react",
         )

@@ -16,16 +16,13 @@ playing. Retrieval failures are logged when `verbose=True` for debug.
 
 from __future__ import annotations
 
-import json
-import time
 from typing import TYPE_CHECKING
 
 from polimillionaire._vendor.millionaire_client.models import Question
-from polimillionaire.llm import LLM, Message
+from polimillionaire.llm import LLM
 from polimillionaire.prompts import rag_calc_react as prompt
-from polimillionaire.strategies._common import build_decision, make_action_schema, make_schema
+from polimillionaire.strategies._common import run_react_loop
 from polimillionaire.strategies.base import AnswerDecision, Context
-from polimillionaire.tools import calc
 
 if TYPE_CHECKING:
     # Importing the retriever pulls numpy + faiss + sentence-transformers,
@@ -75,8 +72,6 @@ class RagCalcReactStrategy:
         return self._variant.version
 
     def __call__(self, question: Question, ctx: Context) -> AnswerDecision:  # noqa: ARG002
-        start = time.perf_counter()
-
         try:
             references = self._retriever.search(question.text, k=self._k) if self._k else []
         except Exception as e:  # noqa: BLE001 -- never block answering on retrieval
@@ -90,49 +85,15 @@ class RagCalcReactStrategy:
                 + ", ".join(f"{r.id} ({r.score:.2f})" for r in references)
             )
 
-        messages: list[Message] = list(self._variant.render(question, references))
-        action_schema = make_action_schema(question)
-
-        for _ in range(self._max_steps):
-            try:
-                out = self._llm.complete_json(messages, action_schema)
-            except ValueError:
-                if self._verbose:
-                    print("   [rag-calc-react] action step failed to parse — forcing answer")
-                break
-            if out["action"] == "answer":
-                return self._build(out, start)
-            expression = out["expression"]
-            result = calc(expression)
-            if self._verbose:
-                print(f'   [rag-calc-react] calc("{expression}") -> {result}')
-            messages.append({"role": "assistant", "content": json.dumps(out)})
-            messages.append({"role": "user", "content": f"Calculator: `{expression}` = {result}"})
-
-        # Step cap or parse failure -- force a commit on the answer-only schema.
-        messages.append(
-            {"role": "user", "content": "Step limit reached. Answer now using the answer schema."}
-        )
-        try:
-            out = self._llm.complete_json(messages, make_schema(question))
-        except ValueError:
-            if self._verbose:
-                print("   [rag-calc-react] forced answer also failed — defaulting to option 0")
-            return self._build(
-                {
-                    "rationale": "Model output failed to parse; defaulting to first option.",
-                    "answer_id": question.options[0].id,
-                    "confidence": 0.0,
-                },
-                start,
-            )
-        return self._build(out, start)
-
-    def _build(self, out: dict, start: float) -> AnswerDecision:
-        return build_decision(
-            out,
-            start,
+        messages = list(self._variant.render(question, references))
+        return run_react_loop(
+            self._llm,
+            messages,
+            question,
+            max_steps=self._max_steps,
             model_name=self.model_name,
             strategy_name=self.strategy_name,
             prompt_version=self.prompt_version,
+            verbose=self._verbose,
+            log_prefix="rag-calc-react",
         )
