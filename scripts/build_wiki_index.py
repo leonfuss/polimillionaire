@@ -37,7 +37,9 @@ import numpy as np
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 DEFAULT_EMBEDDER = "BAAI/bge-base-en-v1.5"
-BATCH_SIZE = 64
+# Conservative default that fits any GPU >= 8 GB. On T4 (15 GB) you can
+# typically push to 256-512 for ~3-5x throughput; override via --batch-size.
+DEFAULT_BATCH_SIZE = 256
 
 # Intermediate file names. Leading underscore = staging artifact (consumed by
 # this script), no underscore = index artifact (consumed by the retriever).
@@ -181,10 +183,10 @@ def _embed_one(seed, args: argparse.Namespace) -> None:
     emb = Embedder(args.embedder)
     print(f"  device={emb.device}, dim={emb.dim}")
 
-    print(f"embedding {len(passages)} chunks (batch_size={BATCH_SIZE})...")
+    print(f"embedding {len(passages)} chunks (batch_size={args.batch_size})...")
     embeddings = emb.encode(
         [p["text"] for p in passages],
-        batch_size=BATCH_SIZE,
+        batch_size=args.batch_size,
         show_progress=True,
     )
     print(f"  embeddings shape {embeddings.shape}")
@@ -251,6 +253,15 @@ def main() -> int:
         type=int,
         default=0,
         help="cap title count for a quick dry run (0 = no cap)",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=DEFAULT_BATCH_SIZE,
+        help=(
+            f"embedding batch size (default: {DEFAULT_BATCH_SIZE}). "
+            "Bump to 512 on T4 if VRAM allows; drop to 64 on a small GPU."
+        ),
     )
     parser.add_argument(
         "--refresh",
