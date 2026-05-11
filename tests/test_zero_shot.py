@@ -8,8 +8,11 @@ from __future__ import annotations
 
 from typing import Any, cast
 
+import pytest
+
 from polimillionaire._vendor.millionaire_client.models import Option, Question
 from polimillionaire.llm import LLM
+from polimillionaire.prompts import zero_shot as zero_shot_prompt
 from polimillionaire.prompts._common import render_question_block
 from polimillionaire.strategies._common import make_schema
 from polimillionaire.strategies.base import Context
@@ -99,3 +102,15 @@ def test_zero_shot_strategy_passes_per_question_schema() -> None:
     assert fake.last_messages[0]["role"] == "system"
     assert fake.last_messages[1]["role"] == "user"
     assert "[3] Paris" in fake.last_messages[1]["content"]
+
+
+def test_zero_shot_default_prompt_version_matches_latest() -> None:
+    fake = _FakeLLM(response={"rationale": "x", "confidence": 0.5, "answer_id": 1})
+    strategy = ZeroShotStrategy(cast(LLM, fake))
+    assert strategy.prompt_version == zero_shot_prompt.LATEST
+
+
+def test_zero_shot_unknown_prompt_version_raises() -> None:
+    fake = _FakeLLM(response={})
+    with pytest.raises(ValueError, match="unknown prompt version"):
+        ZeroShotStrategy(cast(LLM, fake), prompt_version="does-not-exist")

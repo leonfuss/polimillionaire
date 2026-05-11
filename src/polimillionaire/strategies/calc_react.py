@@ -27,21 +27,37 @@ class CalcReactStrategy:
     """
 
     strategy_name = "calc_react"
-    prompt_version = prompt.PROMPT_VERSION
 
-    def __init__(self, llm: LLM, *, max_steps: int = 3, verbose: bool = False) -> None:
+    def __init__(
+        self,
+        llm: LLM,
+        *,
+        max_steps: int = 3,
+        verbose: bool = False,
+        prompt_version: str = prompt.LATEST,
+    ) -> None:
         if max_steps < 1:
             raise ValueError(f"max_steps must be >= 1, got {max_steps}")
+        if prompt_version not in prompt.PROMPTS:
+            raise ValueError(
+                f"unknown prompt version {prompt_version!r}; "
+                f"available: {sorted(prompt.PROMPTS)}"
+            )
         self._llm = llm
         self._max_steps = max_steps
         self._verbose = verbose
+        self._variant = prompt.PROMPTS[prompt_version]
 
     @property
     def model_name(self) -> str:
         return self._llm.name
 
+    @property
+    def prompt_version(self) -> str:
+        return self._variant.version
+
     def __call__(self, question: Question, ctx: Context) -> AnswerDecision:  # noqa: ARG002
-        messages: list[Message] = list(prompt.render(question))
+        messages: list[Message] = list(self._variant.render(question))
         action_schema = make_action_schema(question)
         start = time.perf_counter()
 

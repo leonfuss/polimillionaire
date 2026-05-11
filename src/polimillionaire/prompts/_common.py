@@ -9,7 +9,19 @@ before `polimillionaire.strategies.*`.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any
+
 from polimillionaire._vendor.millionaire_client.models import Question
+
+
+@dataclass(frozen=True)
+class PromptVariant:
+    """A specific version of a prompt. `render` produces the message list."""
+
+    version: str
+    render: Callable[..., list[Any]]
 
 
 def render_question_block(question: Question) -> str:

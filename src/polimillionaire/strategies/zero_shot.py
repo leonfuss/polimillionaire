@@ -21,17 +21,26 @@ class ZeroShotStrategy:
     """
 
     strategy_name = "zero_shot"
-    prompt_version = prompt.PROMPT_VERSION
 
-    def __init__(self, llm: LLM) -> None:
+    def __init__(self, llm: LLM, *, prompt_version: str = prompt.LATEST) -> None:
+        if prompt_version not in prompt.PROMPTS:
+            raise ValueError(
+                f"unknown prompt version {prompt_version!r}; "
+                f"available: {sorted(prompt.PROMPTS)}"
+            )
         self._llm = llm
+        self._variant = prompt.PROMPTS[prompt_version]
 
     @property
     def model_name(self) -> str:
         return self._llm.name
 
+    @property
+    def prompt_version(self) -> str:
+        return self._variant.version
+
     def __call__(self, question: Question, ctx: Context) -> AnswerDecision:  # noqa: ARG002
-        messages = prompt.render(question)
+        messages = self._variant.render(question)
         schema = make_schema(question)
         start = time.perf_counter()
         out = self._llm.complete_json(messages, schema)

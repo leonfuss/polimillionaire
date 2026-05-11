@@ -152,10 +152,19 @@ def _wiki_components(project_root: Path, competition_id: int) -> Any:
 
 
 @register("zero_shot")
-def _build_zero_shot(llm: LLM, **_: Any) -> Strategy:
+def _build_zero_shot(
+    llm: LLM,
+    *,
+    competition_id: int | None = None,  # noqa: ARG001
+    project_root: Path | None = None,  # noqa: ARG001
+    **kw: Any,
+) -> Strategy:
     from polimillionaire.strategies.zero_shot import ZeroShotStrategy
 
-    return ZeroShotStrategy(llm)
+    # ZeroShotStrategy only accepts `prompt_version`; drop anything else
+    # other strategies use (verbose, max_steps, k, top_k, ...).
+    kw = {k: v for k, v in kw.items() if k == "prompt_version"}
+    return ZeroShotStrategy(llm, **kw)
 
 
 @register("calc_react")

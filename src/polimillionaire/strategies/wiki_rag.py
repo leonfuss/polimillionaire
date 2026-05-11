@@ -32,7 +32,6 @@ class WikiRagStrategy:
     """Retrieve Wikipedia passages, rerank, then answer in one shot."""
 
     strategy_name = "wiki_rag"
-    prompt_version = prompt.PROMPT_VERSION
 
     def __init__(
         self,
@@ -46,7 +45,13 @@ class WikiRagStrategy:
         fused_k: int = 25,
         top_k: int = 5,
         verbose: bool = False,
+        prompt_version: str = prompt.LATEST,
     ) -> None:
+        if prompt_version not in prompt.PROMPTS:
+            raise ValueError(
+                f"unknown prompt version {prompt_version!r}; "
+                f"available: {sorted(prompt.PROMPTS)}"
+            )
         self._llm = llm
         self._retriever = retriever
         self._bm25 = bm25
@@ -56,10 +61,15 @@ class WikiRagStrategy:
         self._fused_k = fused_k
         self._top_k = top_k
         self._verbose = verbose
+        self._variant = prompt.PROMPTS[prompt_version]
 
     @property
     def model_name(self) -> str:
         return self._llm.name
+
+    @property
+    def prompt_version(self) -> str:
+        return self._variant.version
 
     def __call__(self, question: Question, ctx: Context) -> AnswerDecision:  # noqa: ARG002
         start = time.perf_counter()
@@ -87,7 +97,7 @@ class WikiRagStrategy:
                 + ", ".join(f"{p.id} ({p.score:.2f})" for p in top_passages)
             )
 
-        messages = prompt.render(question, top_passages)
+        messages = self._variant.render(question, top_passages)
         schema = make_schema(question)
 
         try:

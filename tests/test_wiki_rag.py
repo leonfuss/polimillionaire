@@ -120,7 +120,8 @@ def test_strategy_returns_answer_decision_with_correct_option() -> None:
 
 def test_strategy_name_and_prompt_version() -> None:
     assert WikiRagStrategy.strategy_name == "wiki_rag"
-    assert WikiRagStrategy.prompt_version == "wiki_rag/v1"
+    strategy = _make_strategy(_FakeLLM({"rationale": "x", "confidence": 0.5, "answer_id": 1}))
+    assert strategy.prompt_version == "wiki_rag/v1"
 
 
 def test_retrieval_failure_degrades_gracefully() -> None:

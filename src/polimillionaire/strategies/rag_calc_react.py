@@ -39,7 +39,6 @@ class RagCalcReactStrategy:
     """Calc-react augmented with retrieved math reference solutions."""
 
     strategy_name = "rag_calc_react"
-    prompt_version = prompt.PROMPT_VERSION
 
     def __init__(
         self,
@@ -49,20 +48,31 @@ class RagCalcReactStrategy:
         k: int = 3,
         max_steps: int = 3,
         verbose: bool = False,
+        prompt_version: str = prompt.LATEST,
     ) -> None:
         if max_steps < 1:
             raise ValueError(f"max_steps must be >= 1, got {max_steps}")
         if k < 0:
             raise ValueError(f"k must be >= 0, got {k}")
+        if prompt_version not in prompt.PROMPTS:
+            raise ValueError(
+                f"unknown prompt version {prompt_version!r}; "
+                f"available: {sorted(prompt.PROMPTS)}"
+            )
         self._llm = llm
         self._retriever = retriever
         self._k = k
         self._max_steps = max_steps
         self._verbose = verbose
+        self._variant = prompt.PROMPTS[prompt_version]
 
     @property
     def model_name(self) -> str:
         return self._llm.name
+
+    @property
+    def prompt_version(self) -> str:
+        return self._variant.version
 
     def __call__(self, question: Question, ctx: Context) -> AnswerDecision:  # noqa: ARG002
         start = time.perf_counter()
@@ -80,7 +90,7 @@ class RagCalcReactStrategy:
                 + ", ".join(f"{r.id} ({r.score:.2f})" for r in references)
             )
 
-        messages: list[Message] = list(prompt.render(question, references))
+        messages: list[Message] = list(self._variant.render(question, references))
         action_schema = make_action_schema(question)
 
         for _ in range(self._max_steps):

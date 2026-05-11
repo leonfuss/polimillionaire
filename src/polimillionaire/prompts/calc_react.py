@@ -1,22 +1,12 @@
-"""Prompt for the calculator-equipped ReAct strategy.
+"""Calc-react prompt variants.
 
-v1 was a system message + the question. The model invoked calc reasonably
-often but tripped on harder math: it would emit a calculate action with the
-*wrong setup* (e.g. `48 * 24 / 240` instead of `240 * 24 / 48` for an
-LCM/GCD problem), or skip calc entirely on a quadratic / repeating-decimal
-question, then guess.
-
-v2 adds four hand-crafted few-shot exemplars showing the correct
-problem-decomposition pattern for the failure types we've seen so far:
+v2 (current default) adds four hand-crafted few-shot exemplars showing the
+correct problem-decomposition pattern for the failure types we've seen so far:
 
   1. Inclusion-exclusion counting (G1L7 near-miss).
   2. LCM x GCD = a x b (G1L8 near-miss).
   3. Repeating decimal -> fraction (G1L10 loss; needs symbolic Rational).
   4. Quadratic -> interval between roots (cannonball loss; needs sympy.solve).
-
-Bump `PROMPT_VERSION` whenever the wording or exemplars change; the version
-string is written into the predictions log so we can attribute accuracy
-shifts to prompt changes vs model changes.
 """
 
 from __future__ import annotations
@@ -25,11 +15,9 @@ import json
 
 from polimillionaire._vendor.millionaire_client.models import Question
 from polimillionaire.llm import Message
-from polimillionaire.prompts._common import render_question_block
+from polimillionaire.prompts._common import PromptVariant, render_question_block
 
-PROMPT_VERSION = "v2"
-
-SYSTEM = (
+_V2_SYSTEM = SYSTEM = (
     "You are an expert trivia player with access to a calculator tool.\n"
     "\n"
     "On every turn, output JSON matching exactly one of these two shapes:\n"
@@ -218,13 +206,20 @@ _EXEMPLARS: list[list[Message]] = [
 EXEMPLAR_MESSAGES: list[Message] = [m for ex in _EXEMPLARS for m in ex]
 
 
-def render(question: Question) -> list[Message]:
-    """Build the initial message list for a calc-react turn.
-
-    Layout: system message + flattened exemplars + the real question.
-    """
+def _render_v2(question: Question) -> list[Message]:
     return [
-        {"role": "system", "content": SYSTEM},
+        {"role": "system", "content": _V2_SYSTEM},
         *EXEMPLAR_MESSAGES,
         {"role": "user", "content": render_question_block(question)},
     ]
+
+
+PROMPTS: dict[str, PromptVariant] = {
+    "v2": PromptVariant(version="v2", render=_render_v2),
+}
+
+LATEST = "v2"
+
+# legacy module-level aliases so existing callers that do `prompt.render(...)` keep working
+PROMPT_VERSION = LATEST
+render = PROMPTS[LATEST].render

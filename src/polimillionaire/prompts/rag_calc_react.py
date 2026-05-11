@@ -1,4 +1,4 @@
-"""Prompt for RAG-augmented calc-react.
+"""RAG-augmented calc-react prompt variants.
 
 Reuses `calc_react.SYSTEM` and the four hand-crafted ReAct exemplars
 verbatim -- those teach the JSON action format the model has to emit.
@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING
 
 from polimillionaire._vendor.millionaire_client.models import Question
 from polimillionaire.llm import Message
-from polimillionaire.prompts._common import render_question_block
+from polimillionaire.prompts._common import PromptVariant, render_question_block
 from polimillionaire.prompts.calc_react import EXEMPLAR_MESSAGES, SYSTEM
 
 if TYPE_CHECKING:
@@ -30,9 +30,7 @@ if TYPE_CHECKING:
     # module imports cleanly without the `[rag]` deps.
     from polimillionaire.retrieval.retriever import Passage
 
-PROMPT_VERSION = "rag-v1"
-
-# Cap each retrieved solution. The MATH dataset's solutions average ~400
+# cap each retrieved solution. the MATH dataset's solutions average ~400
 # chars but tail out past 1500 on the hardest problems; left uncapped
 # they bloat the prompt past the model's useful attention span.
 _MAX_SOLUTION_CHARS = 600
@@ -65,8 +63,7 @@ def _format_reference_block(passages: list[Passage]) -> str:
     )
 
 
-def render(question: Question, references: list[Passage]) -> list[Message]:
-    """Build the initial message list for a RAG-augmented calc-react turn."""
+def _render_rag_v1(question: Question, references: list[Passage]) -> list[Message]:
     system = SYSTEM
     block = _format_reference_block(references)
     if block:
@@ -76,3 +73,14 @@ def render(question: Question, references: list[Passage]) -> list[Message]:
         *EXEMPLAR_MESSAGES,
         {"role": "user", "content": render_question_block(question)},
     ]
+
+
+PROMPTS: dict[str, PromptVariant] = {
+    "rag-v1": PromptVariant(version="rag-v1", render=_render_rag_v1),
+}
+
+LATEST = "rag-v1"
+
+# legacy module-level aliases so existing callers that do `prompt.render(...)` keep working
+PROMPT_VERSION = LATEST
+render = PROMPTS[LATEST].render
