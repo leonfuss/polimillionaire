@@ -11,6 +11,7 @@ from this `__init__.py` once it's stable.
 from polimillionaire.strategies.base import AnswerDecision, Context, Strategy
 from polimillionaire.strategies.calc_react import CalcReactStrategy
 from polimillionaire.strategies.rag_calc_react import RagCalcReactStrategy
+from polimillionaire.strategies.wiki_rag import WikiRagStrategy
 from polimillionaire.strategies.zero_shot import ZeroShotStrategy
 
 __all__ = [
@@ -19,5 +20,6 @@ __all__ = [
     "Context",
     "RagCalcReactStrategy",
     "Strategy",
+    "WikiRagStrategy",
     "ZeroShotStrategy",
 ]

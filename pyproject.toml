@@ -33,6 +33,7 @@ rag = [
     "faiss-cpu>=1.8",
     "datasets>=2.20",
     "numpy>=1.26",
+    "rank-bm25>=0.2.2",
 ]
 
 [build-system]

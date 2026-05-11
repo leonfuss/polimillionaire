@@ -24,6 +24,14 @@ sentence-transformers>=3.0
 huggingface-hub>=0.24
 faiss-cpu>=1.8
 
+# Hugging Face dataset loader: needed by `scripts/build_math_index.py` and
+# `scripts/build_wiki_index.py` to pull the MATH and Wikipedia corpora. tqdm
+# and numpy come along transitively via the above so they don't need their
+# own line.
+datasets>=2.20
+# Sparse retrieval companion to FAISS for hybrid Wiki retrieval.
+rank-bm25>=0.2.2
+
 # llama-cpp-python: pre-built CUDA 12.2 wheel for Colab T4. The matching
 # wheel index is added with --extra-index-url in the bootstrap cell:
 #     pip install -r requirements-colab.txt \

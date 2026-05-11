@@ -14,10 +14,13 @@ The script intentionally does no CLI parsing -- this is a debug surface,
 not a tool. Re-run with edits.
 
 Strategy options:
-  - "auto"           per-competition routing (matches continuous_play
-                     and replay): rag_calc_react for Maths when an
-                     index exists, calc_react otherwise; zero_shot for
-                     the other three categories.
+  - "auto"           per-competition routing: rag_calc_react for Maths
+                     when a math index exists (calc_react otherwise);
+                     wiki_rag for Entertainment/History/Science when a
+                     wiki index exists (zero_shot otherwise).
+  - "wiki_rag"       Wikipedia-RAG for the current competition; needs
+                     `data/index/wiki_<competition>/` built via the
+                     corpus pipeline.
   - "rag_calc_react" calc-react with retrieved MATH exemplars; needs
                      `data/index/math/` (build via build_math_index.py).
   - "calc_react"     calc-react with the four hand-crafted exemplars.
@@ -34,6 +37,7 @@ from polimillionaire.play import auto_play_loop
 from polimillionaire.strategies import (
     CalcReactStrategy,
     RagCalcReactStrategy,
+    WikiRagStrategy,
     ZeroShotStrategy,
 )
 from polimillionaire.strategies.base import Strategy
@@ -42,7 +46,7 @@ from polimillionaire.strategies.base import Strategy
 
 COMPETITION_ID = 3  # set to whichever competition you want to play
 MODEL_NAME = "qwen3-8b"
-STRATEGY_KIND = "auto"  # "auto", "rag_calc_react", "calc_react", "zero_shot"
+STRATEGY_KIND = "auto"  # "auto", "wiki_rag", "rag_calc_react", "calc_react", "zero_shot"
 MAX_GAMES = 1
 MAX_STEPS = 3  # calc_react / rag_calc_react only
 RAG_K = 3  # retrieved exemplars per math question (rag_calc_react only)
@@ -50,6 +54,12 @@ MATH_COMPETITION_ID = 3
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 MATH_INDEX_DIR = _PROJECT_ROOT / "data" / "index" / "math"
+
+WIKI_INDEX_DIRS = {
+    0: _PROJECT_ROOT / "data" / "index" / "wiki_entertainment",
+    1: _PROJECT_ROOT / "data" / "index" / "wiki_history",
+    2: _PROJECT_ROOT / "data" / "index" / "wiki_science",
+}
 
 # ----------------------------------------------------------------------------
 
@@ -71,6 +81,26 @@ def _load_math_retriever():
         return None
 
 
+def _load_wiki_components(competition_id: int):
+    """Return (retriever, bm25_index, reranker) or None if any piece is missing."""
+    index_dir = WIKI_INDEX_DIRS.get(competition_id)
+    if index_dir is None or not index_dir.exists():
+        return None
+    try:
+        from polimillionaire.retrieval import BM25Index, Reranker, Retriever
+
+        retriever = Retriever(index_dir)
+        bm25 = BM25Index.load(index_dir)
+        reranker = Reranker()
+        return retriever, bm25, reranker
+    except Exception as exc:  # noqa: BLE001 -- fall back to zero-shot
+        print(
+            f"!! wiki components unavailable for competition {competition_id} "
+            f"({type(exc).__name__}: {exc}); using zero_shot"
+        )
+        return None
+
+
 def make_strategy(llm: LLM, competition_id: int, retriever=None) -> Strategy:
     if STRATEGY_KIND == "auto":
         if competition_id == MATH_COMPETITION_ID:
@@ -79,7 +109,21 @@ def make_strategy(llm: LLM, competition_id: int, retriever=None) -> Strategy:
                     llm, retriever, k=RAG_K, max_steps=MAX_STEPS, verbose=True
                 )
             return CalcReactStrategy(llm, max_steps=MAX_STEPS, verbose=True)
+        # non-math: try wiki_rag, fall back to zero_shot
+        components = _load_wiki_components(competition_id)
+        if components is not None:
+            wiki_retriever, bm25, reranker = components
+            return WikiRagStrategy(llm, wiki_retriever, bm25, reranker, verbose=True)
         return ZeroShotStrategy(llm)
+    if STRATEGY_KIND == "wiki_rag":
+        components = _load_wiki_components(competition_id)
+        if components is None:
+            raise SystemExit(
+                f"wiki_rag needs an index at {WIKI_INDEX_DIRS.get(competition_id)}. "
+                "Run the corpus build pipeline first."
+            )
+        wiki_retriever, bm25, reranker = components
+        return WikiRagStrategy(llm, wiki_retriever, bm25, reranker, verbose=True)
     if STRATEGY_KIND == "rag_calc_react":
         if retriever is None:
             raise SystemExit(
