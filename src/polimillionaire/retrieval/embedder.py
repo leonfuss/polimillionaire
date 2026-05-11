@@ -46,7 +46,16 @@ class Embedder:
         if self._model is None:
             from sentence_transformers import SentenceTransformer
 
-            self._model = SentenceTransformer(self.name, device=self.device)
+            # On CUDA, run the model in fp16: ~2-3x throughput for bge-class
+            # models on T4 with no measurable quality drop on cosine-sim retrieval.
+            # MPS / CPU stay at default precision; fp16 inference there is
+            # either slower (CPU) or fragile (MPS path varies by torch version).
+            kwargs: dict = {}
+            if self.device == "cuda":
+                import torch
+
+                kwargs["model_kwargs"] = {"torch_dtype": torch.float16}
+            self._model = SentenceTransformer(self.name, device=self.device, **kwargs)
 
     @property
     def dim(self) -> int:
