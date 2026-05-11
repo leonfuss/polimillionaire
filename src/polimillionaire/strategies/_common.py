@@ -6,9 +6,36 @@ to avoid `prompts/* -> strategies/*` imports that would form a cycle.
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from polimillionaire._vendor.millionaire_client.models import Question
+from polimillionaire.strategies.base import AnswerDecision
+
+
+def build_decision(
+    out: dict,
+    start: float,
+    *,
+    model_name: str,
+    strategy_name: str,
+    prompt_version: str,
+) -> AnswerDecision:
+    """Build an AnswerDecision from a parsed model output and a perf_counter start time.
+
+    All strategies that produce `{rationale, confidence, answer_id}` output share
+    this shape -- keeping it here avoids three identical 10-line copies.
+    """
+    latency_ms = int((time.perf_counter() - start) * 1000)
+    return AnswerDecision(
+        option_id=int(out["answer_id"]),
+        confidence=float(out["confidence"]),
+        rationale=out.get("rationale"),
+        model_name=model_name,
+        strategy_name=strategy_name,
+        prompt_version=prompt_version,
+        latency_ms=latency_ms,
+    )
 
 
 def make_schema(question: Question, *, include_rationale: bool = True) -> dict[str, Any]:

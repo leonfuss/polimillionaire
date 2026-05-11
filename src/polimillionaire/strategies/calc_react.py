@@ -14,7 +14,7 @@ import time
 from polimillionaire._vendor.millionaire_client.models import Question
 from polimillionaire.llm import LLM, Message
 from polimillionaire.prompts import calc_react as prompt
-from polimillionaire.strategies._common import make_action_schema, make_schema
+from polimillionaire.strategies._common import build_decision, make_action_schema, make_schema
 from polimillionaire.strategies.base import AnswerDecision, Context
 from polimillionaire.tools import calc
 
@@ -56,7 +56,7 @@ class CalcReactStrategy:
                     print("   [calc-react] action step failed to parse — forcing answer")
                 break
             if out["action"] == "answer":
-                return self._decision(out, start)
+                return self._build(out, start)
             expression = out["expression"]
             result = calc(expression)
             if self._verbose:
@@ -75,25 +75,21 @@ class CalcReactStrategy:
             # at zero confidence so the game submits *something* and continues.
             if self._verbose:
                 print("   [calc-react] forced answer also failed — defaulting to option 0")
-            return self._decision(
+            return self._build(
                 {
-                    "action": "answer",
                     "rationale": "Model output failed to parse; defaulting to first option.",
                     "answer_id": question.options[0].id,
                     "confidence": 0.0,
                 },
                 start,
             )
-        return self._decision({"action": "answer", **out}, start)
+        return self._build(out, start)
 
-    def _decision(self, out: dict, start: float) -> AnswerDecision:
-        latency_ms = int((time.perf_counter() - start) * 1000)
-        return AnswerDecision(
-            option_id=int(out["answer_id"]),
-            confidence=float(out["confidence"]),
-            rationale=out.get("rationale"),
+    def _build(self, out: dict, start: float) -> AnswerDecision:
+        return build_decision(
+            out,
+            start,
             model_name=self.model_name,
             strategy_name=self.strategy_name,
             prompt_version=self.prompt_version,
-            latency_ms=latency_ms,
         )

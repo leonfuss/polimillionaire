@@ -7,7 +7,7 @@ import time
 from polimillionaire._vendor.millionaire_client.models import Question
 from polimillionaire.llm import LLM
 from polimillionaire.prompts import zero_shot as prompt
-from polimillionaire.strategies._common import make_schema
+from polimillionaire.strategies._common import build_decision, make_schema
 from polimillionaire.strategies.base import AnswerDecision, Context
 
 
@@ -35,13 +35,10 @@ class ZeroShotStrategy:
         schema = make_schema(question)
         start = time.perf_counter()
         out = self._llm.complete_json(messages, schema)
-        latency_ms = int((time.perf_counter() - start) * 1000)
-        return AnswerDecision(
-            option_id=int(out["answer_id"]),
-            confidence=float(out["confidence"]),
-            rationale=out.get("rationale"),
+        return build_decision(
+            out,
+            start,
             model_name=self.model_name,
             strategy_name=self.strategy_name,
             prompt_version=self.prompt_version,
-            latency_ms=latency_ms,
         )
