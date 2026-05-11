@@ -5,16 +5,19 @@ chunking, BM25) can run on a free CPU runtime and only the embedding step
 needs a GPU. Each step's output is cached on disk and skipped on re-run,
 so an interrupted build resumes where it stopped.
 
+    # On Colab, install deps via the project's existing pip flow, then call
+    # `python` directly -- uv would re-create a venv and waste runtime disk.
+    #
     # Phase 1 -- CPU runtime, no GPU quota used.
     # Outputs _titles.json, _bodies.jsonl, passages.jsonl, bm25_*.
-    uv run python scripts/build_wiki_index.py --all --phase stage \\
+    python scripts/build_wiki_index.py --all --phase stage \\
         --output-dir /content/drive/MyDrive/PoliMillionaire/index
 
     # Phase 2 -- GPU runtime. Reads passages.jsonl, writes embeddings.npy.
-    uv run python scripts/build_wiki_index.py --all --phase embed \\
+    python scripts/build_wiki_index.py --all --phase embed \\
         --output-dir /content/drive/MyDrive/PoliMillionaire/index
 
-    # Default (--phase all) runs both sequentially -- fine for local builds.
+    # Local build (uv-managed venv, default --phase all runs both steps).
     uv run python scripts/build_wiki_index.py --competition 0
 
 Other useful flags:
