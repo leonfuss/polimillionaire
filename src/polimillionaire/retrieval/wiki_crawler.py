@@ -52,7 +52,7 @@ def enumerate_category_titles(
     max_titles: int | None = None,
     api_url: str = "https://en.wikipedia.org/w/api.php",
     user_agent: str = _DEFAULT_UA,
-    request_delay: float = 0.1,
+    request_delay: float = 0.02,
 ) -> set[str]:
     """BFS-style category walk; returns the unique set of page (mainspace) titles."""
     ua = os.environ.get("WIKI_USER_AGENT", user_agent)
