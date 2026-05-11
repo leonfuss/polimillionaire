@@ -6,8 +6,8 @@ eval harness iterate over heterogeneous strategies uniformly.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any, Protocol
+from dataclasses import dataclass
+from typing import Protocol
 
 from polimillionaire._vendor.millionaire_client.models import Question
 
@@ -25,15 +25,10 @@ class AnswerDecision:
 
 @dataclass(frozen=True)
 class Context:
-    """Whatever a strategy needs at decision time beyond the question itself.
-
-    Kept open by design — strategies pull what they need (LLM handle, RAG
-    retriever, tool registry) from `extras` and ignore the rest.
-    """
+    """Whatever a strategy needs at decision time beyond the question itself."""
 
     competition_id: int
     level: int
-    extras: dict[str, Any] = field(default_factory=dict)
 
 
 class Strategy(Protocol):

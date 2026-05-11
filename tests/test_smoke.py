@@ -38,9 +38,10 @@ def test_answer_decision_defaults():
     assert d.rationale is None
 
 
-def test_context_extras_default_empty():
+def test_context_fields():
     ctx = Context(competition_id=1, level=5)
-    assert ctx.extras == {}
+    assert ctx.competition_id == 1
+    assert ctx.level == 5
 
 
 def _record(**overrides):
