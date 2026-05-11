@@ -44,9 +44,14 @@ class WikiRagStrategy:
         sparse_k: int = 50,
         fused_k: int = 25,
         top_k: int = 5,
-        verbose: bool = False,
+        use_dense: bool = True,
+        use_sparse: bool = True,
+        use_reranker: bool = True,
         prompt_version: str = prompt.LATEST,
+        verbose: bool = False,
     ) -> None:
+        if not (use_dense or use_sparse):
+            raise ValueError("at least one of use_dense, use_sparse must be True")
         if prompt_version not in prompt.PROMPTS:
             raise ValueError(
                 f"unknown prompt version {prompt_version!r}; "
@@ -60,6 +65,9 @@ class WikiRagStrategy:
         self._sparse_k = sparse_k
         self._fused_k = fused_k
         self._top_k = top_k
+        self._use_dense = use_dense
+        self._use_sparse = use_sparse
+        self._use_reranker = use_reranker
         self._verbose = verbose
         self._variant = prompt.PROMPTS[prompt_version]
 
@@ -77,10 +85,17 @@ class WikiRagStrategy:
         query = question.text + " | " + " | ".join(o.text for o in question.options)
 
         try:
-            dense_hits = self._retriever.search(query, k=self._dense_k)
-            sparse_hits = self._bm25.search(query, k=self._sparse_k)
-            fused = reciprocal_rank_fusion([dense_hits, sparse_hits], top_n=self._fused_k)
-            top_passages = self._reranker.rerank(query, fused, top_k=self._top_k)
+            rankings = []
+            if self._use_dense:
+                rankings.append(self._retriever.search(query, k=self._dense_k))
+            if self._use_sparse:
+                rankings.append(self._bm25.search(query, k=self._sparse_k))
+            # single-list rrf is a rank-ordered passthrough — still correct
+            fused = reciprocal_rank_fusion(rankings, top_n=self._fused_k)
+            if self._use_reranker:
+                top_passages = self._reranker.rerank(query, fused, top_k=self._top_k)
+            else:
+                top_passages = fused[: self._top_k]
         except Exception as e:  # noqa: BLE001 -- never block answering on retrieval
             if self._verbose:
                 print(
