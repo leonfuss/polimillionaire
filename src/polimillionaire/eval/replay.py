@@ -1,4 +1,10 @@
-"""Replay a strategy over every labelled question in the log."""
+"""Replay a strategy over every labelled question in the log.
+
+`replay_records()` is the primary entry point: it returns one `ReplayResult` per
+question, which the notebook composes into polars tables. `replay()` is a thin
+sugar layer that aggregates the records into the old `combined/hand_labeled/
+server_confirmed` dict shape so existing CLI callers keep working.
+"""
 
 from __future__ import annotations
 
@@ -9,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from polimillionaire._vendor.millionaire_client.models import Option, Question
+from polimillionaire.eval.results import ReplayResult
 from polimillionaire.strategies.base import AnswerDecision, Context, Strategy
 
 # Stable enough to inline rather than fetch from the API (which would require
@@ -21,32 +28,14 @@ COMPETITION_NAMES: dict[int, str] = {
 }
 
 
-def replay(
+def replay_records(
     strategy: Strategy,
     log_path: str | Path,
     *,
     competition_id: int | None = None,
     show_progress: bool = False,
-) -> dict:
-    """Run `strategy` over every question in the log that has a known answer.
-
-    `competition_id`, if set, restricts the replay to that single competition
-    (0-3). When `None`, every labelled question is replayed regardless of
-    category.
-
-    `show_progress=True` renders a tqdm progress bar with running accuracy
-    in the postfix. Off by default so library callers (and the smoke test)
-    stay silent.
-
-    Returns combined accuracy with a `by_competition` breakdown, plus two
-    sub-views over the same shape:
-      - `hand_labeled`: rows where `generated_answer = 1` (we reasoned the
-        answer; ground truth is opinion, not server-confirmed).
-      - `server_confirmed`: rows where `generated_answer = 0` (the server
-        said "correct" at play time; ground truth is gold).
-    Splitting these lets us see whether accuracy is driven by easy
-    server-confirmed questions or holds up on the harder hand-labelled set.
-    """
+) -> list[ReplayResult]:
+    """Run `strategy` over every labelled question; return one ReplayResult per question."""
     path = Path(log_path)
     if not path.exists():
         raise FileNotFoundError(f"No question log at {path}")
@@ -76,9 +65,8 @@ def replay(
         cur = con.execute(sql, params)
         rows = cur.fetchall()
 
-    combined = _empty_bucket()
-    hand_labeled = _empty_bucket()
-    server_confirmed = _empty_bucket()
+    results: list[ReplayResult] = []
+    correct_so_far = 0
 
     iterable: Any = rows
     pbar = None
@@ -99,25 +87,89 @@ def replay(
             level=row["level"],
         )
         ctx = Context(competition_id=row["competition_id"], level=row["level"])
-        is_right = strategy(question, ctx).option_id == row["correct_option_id_if_known"]
+        decision = strategy(question, ctx)
+        # `correct_option_id_if_known` is NOT NULL-filtered in the WHERE clause,
+        # but sqlite3.Row returns Any -- cast so the dataclass typing stays honest.
+        correct_id = int(row["correct_option_id_if_known"])
+        is_right = decision.option_id == correct_id
+        if is_right:
+            correct_so_far += 1
 
-        comp_id = row["competition_id"]
-        _record(combined, comp_id, is_right)
-        if row["generated_answer"]:
-            _record(hand_labeled, comp_id, is_right)
-        else:
-            _record(server_confirmed, comp_id, is_right)
+        results.append(
+            ReplayResult(
+                strategy_name=decision.strategy_name,
+                model_name=decision.model_name,
+                prompt_version=decision.prompt_version,
+                question_id=row["question_id"],
+                competition_id=row["competition_id"],
+                level=row["level"],
+                predicted_option_id=decision.option_id,
+                correct_option_id=correct_id,
+                correct=is_right,
+                confidence=decision.confidence,
+                latency_ms=decision.latency_ms,
+                generated_answer=bool(row["generated_answer"]),
+            )
+        )
 
         if pbar is not None:
             pbar.set_postfix(
-                comp=comp_id,
+                comp=row["competition_id"],
                 lvl=row["level"],
-                acc=f"{combined['correct'] / combined['total']:.0%}",
+                acc=f"{correct_so_far / len(results):.0%}",
                 refresh=False,
             )
 
     if pbar is not None:
         pbar.close()
+
+    return results
+
+
+def replay(
+    strategy: Strategy,
+    log_path: str | Path,
+    *,
+    competition_id: int | None = None,
+    show_progress: bool = False,
+) -> dict:
+    """Run `strategy` over every question in the log that has a known answer.
+
+    `competition_id`, if set, restricts the replay to that single competition
+    (0-3). When `None`, every labelled question is replayed regardless of
+    category.
+
+    `show_progress=True` renders a tqdm progress bar with running accuracy
+    in the postfix. Off by default so library callers (and the smoke test)
+    stay silent.
+
+    Returns combined accuracy with a `by_competition` breakdown, plus two
+    sub-views over the same shape:
+      - `hand_labeled`: rows where `generated_answer = 1` (we reasoned the
+        answer; ground truth is opinion, not server-confirmed).
+      - `server_confirmed`: rows where `generated_answer = 0` (the server
+        said "correct" at play time; ground truth is gold).
+    Splitting these lets us see whether accuracy is driven by easy
+    server-confirmed questions or holds up on the harder hand-labelled set.
+    """
+    records = replay_records(
+        strategy, log_path, competition_id=competition_id, show_progress=show_progress
+    )
+    return _aggregate(records)
+
+
+def _aggregate(records: list[ReplayResult]) -> dict:
+    """Build the combined/hand_labeled/server_confirmed summary dict from flat records."""
+    combined = _empty_bucket()
+    hand_labeled = _empty_bucket()
+    server_confirmed = _empty_bucket()
+
+    for r in records:
+        _record(combined, r.competition_id, r.correct)
+        if r.generated_answer:
+            _record(hand_labeled, r.competition_id, r.correct)
+        else:
+            _record(server_confirmed, r.competition_id, r.correct)
 
     result = _finalize(combined)
     result["hand_labeled"] = _finalize(hand_labeled)
