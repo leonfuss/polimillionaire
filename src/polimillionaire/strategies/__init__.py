@@ -10,7 +10,13 @@ from this `__init__.py` once it's stable.
 
 from polimillionaire.strategies.base import AnswerDecision, Context, Strategy
 from polimillionaire.strategies.calc_react import CalcReactStrategy
+from polimillionaire.strategies.factory import (
+    available,
+    make_strategy,
+    register,
+)
 from polimillionaire.strategies.rag_calc_react import RagCalcReactStrategy
+from polimillionaire.strategies.routed import RoutedStrategy
 from polimillionaire.strategies.wiki_rag import WikiRagStrategy
 from polimillionaire.strategies.zero_shot import ZeroShotStrategy
 
@@ -19,7 +25,11 @@ __all__ = [
     "CalcReactStrategy",
     "Context",
     "RagCalcReactStrategy",
+    "RoutedStrategy",
     "Strategy",
     "WikiRagStrategy",
     "ZeroShotStrategy",
+    "available",
+    "make_strategy",
+    "register",
 ]
