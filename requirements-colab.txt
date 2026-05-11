@@ -30,7 +30,9 @@ faiss-cpu>=1.8
 # own line.
 datasets>=2.20
 # Sparse retrieval companion to FAISS for hybrid Wiki retrieval.
-rank-bm25>=0.2.2
+# bm25s uses scipy CSR sparse matrices so an 800k-passage corpus fits in
+# ~1.5GB instead of the 15GB+ rank-bm25 needed for the same workload.
+bm25s>=0.3.8
 
 # llama-cpp-python: pre-built CUDA 12.2 wheel for Colab T4. The matching
 # wheel index is added with --extra-index-url in the bootstrap cell:

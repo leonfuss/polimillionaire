@@ -46,8 +46,9 @@ BODIES_FILE = "_bodies.jsonl"
 PASSAGES_FILE = "passages.jsonl"
 EMBEDDINGS_FILE = "embeddings.npy"
 MANIFEST_FILE = "manifest.json"
-BM25_TOKENS_FILE = "bm25_tokens.jsonl"
-BM25_PARAMS_FILE = "bm25.json"
+# bm25s save format -- presence of params.index.json means the index built
+# and saved successfully; we use it as the "skip step 4" marker on resume.
+BM25_MARKER_FILE = "params.index.json"
 
 
 def _atomic_write(path: Path, content: str) -> None:
@@ -83,7 +84,7 @@ def _stage_one(seed, args: argparse.Namespace) -> None:
     titles_path = out_dir / TITLES_FILE
     bodies_path = out_dir / BODIES_FILE
     passages_path = out_dir / PASSAGES_FILE
-    bm25_tokens_path = out_dir / BM25_TOKENS_FILE
+    bm25_marker_path = out_dir / BM25_MARKER_FILE
 
     print(f"\n=== stage {seed.name} (competition_id={seed.competition_id}) ===")
 
@@ -140,13 +141,13 @@ def _stage_one(seed, args: argparse.Namespace) -> None:
         print(f"      saved {len(passages)} -> {passages_path}")
 
     # --- 4. BM25 sparse index (CPU, ~minutes) ---
-    if bm25_tokens_path.exists() and not args.refresh:
+    if bm25_marker_path.exists() and not args.refresh:
         print(f"[4/4] bm25: reusing index at {out_dir}")
     else:
         print(f"[4/4] bm25: tokenising + building over {len(passages)} passages...")
         bm25 = BM25Index.build(passages)
         bm25.save(out_dir)
-        print(f"      saved -> {bm25_tokens_path.name}, {BM25_PARAMS_FILE}")
+        print(f"      saved bm25s sidecars -> {out_dir}")
 
     print(f"stage done for {seed.name}.")
 

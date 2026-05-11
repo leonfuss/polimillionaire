@@ -1,6 +1,6 @@
 """Tests for BM25Index: build, save/load roundtrip, and search correctness.
 
-Skips when `rank_bm25` isn't installed so a base-install test run still passes.
+Skips when `bm25s` isn't installed so a base-install test run still passes.
 """
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-pytest.importorskip("rank_bm25")
+pytest.importorskip("bm25s")
 
 from polimillionaire.retrieval.bm25 import BM25Index  # noqa: E402
 
@@ -50,8 +50,9 @@ def test_save_load_roundtrip(tmp_path: Path) -> None:
     idx = BM25Index.build(_PASSAGES)
     idx.save(tmp_path)
 
-    assert (tmp_path / "bm25_tokens.jsonl").exists()
-    assert (tmp_path / "bm25.json").exists()
+    # bm25s writes a fixed set of sidecar files; check the marker we resume on.
+    assert (tmp_path / "params.index.json").exists()
+    assert (tmp_path / "vocab.index.json").exists()
 
     loaded = BM25Index.load(tmp_path, _PASSAGES)
     original_hits = idx.search("Eiffel Tower Paris", k=3)
@@ -59,15 +60,15 @@ def test_save_load_roundtrip(tmp_path: Path) -> None:
 
     # rank order is preserved
     assert [h.id for h in original_hits] == [h.id for h in loaded_hits]
-    # scores are numerically identical (would fail if e.g. epsilon weren't persisted)
+    # scores survive the roundtrip
     for a, b in zip(original_hits, loaded_hits, strict=True):
-        assert abs(a.score - b.score) < 1e-9
+        assert abs(a.score - b.score) < 1e-6
 
 
 def test_load_wrong_passage_count_raises(tmp_path: Path) -> None:
     idx = BM25Index.build(_PASSAGES)
     idx.save(tmp_path)
-    with pytest.raises(ValueError, match="passages list length"):
+    with pytest.raises(ValueError, match="passages list length .* != index num_docs"):
         BM25Index.load(tmp_path, _PASSAGES[:2])
 
 

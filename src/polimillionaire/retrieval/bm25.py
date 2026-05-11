@@ -1,8 +1,12 @@
 """BM25 sparse retrieval over tokenised passage text.
 
-Complement to the dense FAISS retriever -- BM25 handles entity-heavy queries
-(proper nouns, exact tokens) much better than embedding-based similarity.
-Pairs with `fusion.reciprocal_rank_fusion` for hybrid retrieval.
+Uses bm25s under the hood (scipy CSR sparse matrices). For an 800k-passage
+corpus this fits in ~1.5GB instead of the 15+ GB rank-bm25 needed for the
+same list-of-list-of-Python-strings layout, which matters on Colab's
+12 GB CPU runtime.
+
+Pairs with the dense FAISS retriever via `fusion.reciprocal_rank_fusion`
+for hybrid retrieval.
 """
 
 from __future__ import annotations
@@ -15,72 +19,73 @@ from typing import TYPE_CHECKING, Any
 from polimillionaire.retrieval.retriever import Passage
 
 if TYPE_CHECKING:
-    from rank_bm25 import BM25Okapi
+    import bm25s as _bm25s
 
-_TOKENS_FILE = "bm25_tokens.jsonl"
-_PARAMS_FILE = "bm25.json"
+# bm25s writes this file alongside its three .npy sidecars; we use it as
+# the cheap "is the index on disk?" marker without enumerating every file.
+_PARAMS_FILE = "params.index.json"
+
+# Single tokenisation rule shared between corpus indexing and query time.
+# Plain word-char split keeps exact-token matching on entities like
+# "Kallinikos" or "Thanos" -- stemming would smear those.
+_TOKEN_PATTERN = r"\w+"
 
 
 def _tokenize(text: str) -> list[str]:
-    # plain word-char split keeps exact-token matching on entities like
-    # "Kallinikos" or "Thanos" -- stemming would smear those.
-    return re.findall(r"\w+", text.lower())
+    return re.findall(_TOKEN_PATTERN, text.lower())
 
 
 class BM25Index:
-    """BM25Okapi index over a list of passages."""
+    """BM25 index over a list of passages, backed by bm25s."""
 
-    def __init__(
-        self,
-        bm25: BM25Okapi,
-        passages: list[dict[str, Any]],
-        tokenized: list[list[str]],
-    ) -> None:
+    def __init__(self, bm25: _bm25s.BM25, passages: list[dict[str, Any]]) -> None:
         self._bm25 = bm25
         self._passages = passages
-        self._tokenized = tokenized
 
     @classmethod
     def build(cls, passages: list[dict[str, Any]]) -> BM25Index:
-        """Build an in-memory index from a list of passage dicts."""
-        from rank_bm25 import BM25Okapi
+        """Build an in-memory index from a list of passage dicts.
 
-        tokenized = [_tokenize(p["text"]) for p in passages]
-        bm25 = BM25Okapi(tokenized)
-        return cls(bm25, list(passages), tokenized)
+        Goes straight from str to int-encoded tokens via bm25s.tokenize so
+        we never hold the full corpus as list[list[str]] of Python strings.
+        """
+        import bm25s
+
+        tokens = bm25s.tokenize(
+            [p["text"] for p in passages],
+            lower=True,
+            token_pattern=_TOKEN_PATTERN,
+            stopwords=None,
+            show_progress=True,
+        )
+        bm25 = bm25s.BM25()
+        bm25.index(tokens, show_progress=True)
+        return cls(bm25, list(passages))
 
     def save(self, index_dir: Path) -> None:
-        """Write tokens and BM25 params to `index_dir`."""
+        """Write bm25s sidecar files into `index_dir`.
+
+        Writes: data.csc.index.npy, indices.csc.index.npy,
+        indptr.csc.index.npy, params.index.json, vocab.index.json.
+        """
         index_dir = Path(index_dir)
         index_dir.mkdir(parents=True, exist_ok=True)
-
-        tokens_lines = [json.dumps(toks) for toks in self._tokenized]
-        (index_dir / _TOKENS_FILE).write_text("\n".join(tokens_lines))
-
-        params = {
-            "k1": self._bm25.k1,
-            "b": self._bm25.b,
-            "epsilon": self._bm25.epsilon,
-            "count": len(self._passages),
-        }
-        (index_dir / _PARAMS_FILE).write_text(json.dumps(params))
+        self._bm25.save(str(index_dir))
 
     @classmethod
     def load(cls, index_dir: Path, passages: list[dict[str, Any]] | None = None) -> BM25Index:
-        """Rebuild a BM25Index from disk.
+        """Reload a previously-saved bm25s index.
 
-        Reads `passages.jsonl` from `index_dir` by default -- shared with the
-        dense retriever's on-disk format. Tests can pass an explicit `passages`
-        list to avoid writing the file.
+        Reads `passages.jsonl` from `index_dir` by default so the same
+        on-disk layout serves both dense retrieval and BM25. Tests can
+        pass an explicit `passages` list to skip the file read.
         """
-        from rank_bm25 import BM25Okapi
+        import bm25s
 
         index_dir = Path(index_dir)
-        tokens_path = index_dir / _TOKENS_FILE
         params_path = index_dir / _PARAMS_FILE
-        for p in (tokens_path, params_path):
-            if not p.exists():
-                raise FileNotFoundError(f"bm25 index at {index_dir} is missing {p.name}")
+        if not params_path.exists():
+            raise FileNotFoundError(f"bm25 index at {index_dir} is missing {_PARAMS_FILE}")
 
         if passages is None:
             passages_path = index_dir / "passages.jsonl"
@@ -92,41 +97,30 @@ class BM25Index:
                 json.loads(line) for line in passages_path.read_text().splitlines() if line.strip()
             ]
 
-        tokenized: list[list[str]] = [
-            json.loads(line) for line in tokens_path.read_text().splitlines() if line.strip()
-        ]
-        params = json.loads(params_path.read_text())
+        bm25 = bm25s.BM25.load(str(index_dir), load_corpus=False)
 
-        if len(tokenized) != params["count"]:
-            raise ValueError(f"token count {len(tokenized)} != expected {params['count']}")
-        if len(passages) != params["count"]:
-            raise ValueError(
-                f"passages list length {len(passages)} != index count {params['count']}"
-            )
-
-        # `epsilon` was added later -- fall back to BM25Okapi's default for old indexes.
-        kwargs: dict[str, Any] = {"k1": params["k1"], "b": params["b"]}
-        if "epsilon" in params:
-            kwargs["epsilon"] = params["epsilon"]
-        bm25 = BM25Okapi(tokenized, **kwargs)
-        return cls(bm25, list(passages), tokenized)
+        # Cross-check that the passage list lines up with the indexed corpus
+        # so search() can't return stale ids if passages.jsonl was rewritten.
+        expected = int(json.loads(params_path.read_text())["num_docs"])
+        if len(passages) != expected:
+            raise ValueError(f"passages list length {len(passages)} != index num_docs {expected}")
+        return cls(bm25, list(passages))
 
     def search(self, query: str, k: int) -> list[Passage]:
-        """Return top-k passages by BM25 score. Score is raw (not normalised)."""
+        """Return top-k passages by BM25 score (raw, not normalised)."""
         if k <= 0:
             return []
-        tokens = _tokenize(query)
-        scores = self._bm25.get_scores(tokens)
-        top_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:k]
+        q_tokens = [_tokenize(query)]
+        results, scores = self._bm25.retrieve(q_tokens, k=k, show_progress=False)
         out: list[Passage] = []
-        for idx in top_indices:
-            row = self._passages[idx]
+        for idx, score in zip(results[0], scores[0], strict=False):
+            row = self._passages[int(idx)]
             out.append(
                 Passage(
                     id=row["id"],
                     text=row["text"],
                     metadata=row.get("metadata", {}),
-                    score=float(scores[idx]),
+                    score=float(score),
                 )
             )
         return out
