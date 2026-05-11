@@ -112,14 +112,21 @@ def run_react_loop(
     model_name: str,
     strategy_name: str,
     prompt_version: str,
+    start: float | None = None,
     verbose: bool = False,
     log_prefix: str = "react",
 ) -> AnswerDecision:
     """Bounded calculate-or-answer ReAct loop. Forces an answer on step cap or
-    parse failure; defaults to option 0 at confidence 0 if even that fails."""
+    parse failure; defaults to option 0 at confidence 0 if even that fails.
+
+    Pass `start` from before any retrieval the caller did so the returned
+    AnswerDecision.latency_ms reflects total wall-clock; defaults to "now"
+    for callers (like CalcReactStrategy) that have no retrieval prefix.
+    """
     messages: list[Message] = list(initial_messages)
     action_schema = make_action_schema(question)
-    start = time.perf_counter()
+    if start is None:
+        start = time.perf_counter()
 
     for _ in range(max_steps):
         try:

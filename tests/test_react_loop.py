@@ -155,3 +155,29 @@ def test_double_parse_failure_defaults_to_first_option() -> None:
     assert decision.confidence == 0.0
     assert decision.rationale is not None
     assert "fail" in decision.rationale.lower()
+
+
+def test_caller_supplied_start_includes_retrieval_time() -> None:
+    """When the caller passes `start` from before its retrieval step, latency_ms
+    reflects total wall-clock (retrieval + LLM), not just the loop body."""
+    import time
+
+    fake = _ScriptedLLM([{"action": "answer", "rationale": "r", "confidence": 0.5, "answer_id": 1}])
+    question = _make_question()
+
+    pre_retrieval_start = time.perf_counter()
+    time.sleep(0.02)  # 20ms standing in for retrieval cost
+
+    decision = run_react_loop(
+        cast(LLM, fake),
+        [{"role": "system", "content": "sys"}],
+        question,
+        max_steps=3,
+        model_name="m",
+        strategy_name="s",
+        prompt_version="p",
+        start=pre_retrieval_start,
+    )
+
+    # latency_ms includes the 20ms sleep we did before calling run_react_loop
+    assert decision.latency_ms >= 15

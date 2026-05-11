@@ -16,6 +16,7 @@ playing. Retrieval failures are logged when `verbose=True` for debug.
 
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING
 
 from polimillionaire._vendor.millionaire_client.models import Question
@@ -72,6 +73,9 @@ class RagCalcReactStrategy:
         return self._variant.version
 
     def __call__(self, question: Question, ctx: Context) -> AnswerDecision:  # noqa: ARG002
+        # start before retrieval so latency_ms reflects the full wall-clock
+        # cost of answering, not just LLM time
+        start = time.perf_counter()
         try:
             references = self._retriever.search(question.text, k=self._k) if self._k else []
         except Exception as e:  # noqa: BLE001 -- never block answering on retrieval
@@ -94,6 +98,7 @@ class RagCalcReactStrategy:
             model_name=self.model_name,
             strategy_name=self.strategy_name,
             prompt_version=self.prompt_version,
+            start=start,
             verbose=self._verbose,
             log_prefix="rag-calc-react",
         )

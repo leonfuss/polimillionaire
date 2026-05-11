@@ -80,6 +80,10 @@ class WikiRagStrategy:
         return self._variant.version
 
     def __call__(self, question: Question, ctx: Context) -> AnswerDecision:  # noqa: ARG002
+        # start before retrieval so latency_ms reflects the full wall-clock
+        # cost of answering (retrieval + LLM), matching the 30s server timer.
+        start = time.perf_counter()
+
         # short trivia questions need the options as anchor tokens in the query;
         # the question text alone often lacks enough signal for entity matching.
         query = question.text + " | " + " | ".join(o.text for o in question.options)
@@ -110,9 +114,6 @@ class WikiRagStrategy:
                 + ", ".join(f"{p.id} ({p.score:.2f})" for p in top_passages)
             )
 
-        # latency_ms reflects LLM time only (consistent with calc_react and
-        # rag_calc_react); retrieval cost is observable as the wall-clock gap.
-        start = time.perf_counter()
         messages = self._variant.render(question, top_passages)
         schema = make_schema(question)
 
