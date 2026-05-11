@@ -15,6 +15,7 @@ To add a new strategy, write `strategies/foo.py` and register a builder here:
 
 from __future__ import annotations
 
+import inspect
 import json
 from collections.abc import Callable
 from pathlib import Path
@@ -25,6 +26,25 @@ if TYPE_CHECKING:
     from polimillionaire.strategies.base import Strategy
 
 StrategyBuilder = Callable[..., "Strategy"]
+
+
+def _accepts(cls: type, **kw: Any) -> dict[str, Any]:
+    """Return only the kwargs that the class's __init__ actually accepts.
+
+    `make_strategy("auto", llm, max_steps=3, k=3)` fans out to wiki_rag +
+    rag_calc_react. Each strategy takes a different kwarg set; without filtering,
+    forwarding `max_steps` to WikiRagStrategy raises TypeError. This helper
+    introspects each constructor so the factory doesn't need to track which
+    kwarg belongs to which strategy by hand.
+    """
+    sig = inspect.signature(cls)
+    accepted = {
+        p.name
+        for p in sig.parameters.values()
+        if p.kind in (p.KEYWORD_ONLY, p.POSITIONAL_OR_KEYWORD)
+    }
+    return {k: v for k, v in kw.items() if k in accepted}
+
 
 _REGISTRY: dict[str, StrategyBuilder] = {}
 
@@ -161,10 +181,7 @@ def _build_zero_shot(
 ) -> Strategy:
     from polimillionaire.strategies.zero_shot import ZeroShotStrategy
 
-    # ZeroShotStrategy only accepts `prompt_version`; drop anything else
-    # other strategies use (verbose, max_steps, k, top_k, ...).
-    kw = {k: v for k, v in kw.items() if k == "prompt_version"}
-    return ZeroShotStrategy(llm, **kw)
+    return ZeroShotStrategy(llm, **_accepts(ZeroShotStrategy, **kw))
 
 
 @register("calc_react")
@@ -177,7 +194,7 @@ def _build_calc_react(
 ) -> Strategy:
     from polimillionaire.strategies.calc_react import CalcReactStrategy
 
-    return CalcReactStrategy(llm, **kw)
+    return CalcReactStrategy(llm, **_accepts(CalcReactStrategy, **kw))
 
 
 @register("rag_calc_react")
@@ -186,6 +203,7 @@ def _build_rag_calc_react(
     *,
     competition_id: int | None = None,  # noqa: ARG001
     project_root: Path | None = None,
+    strict: bool = False,
     **kw: Any,
 ) -> Strategy:
     from polimillionaire.strategies.calc_react import CalcReactStrategy
@@ -193,10 +211,13 @@ def _build_rag_calc_react(
 
     retriever = _math_retriever(_resolve_project_root(project_root))
     if retriever is None:
-        # k is only meaningful for the RAG variant; drop it for the fallback
-        kw.pop("k", None)
-        return CalcReactStrategy(llm, **kw)
-    return RagCalcReactStrategy(llm, retriever, **kw)
+        if strict:
+            raise FileNotFoundError(
+                "rag_calc_react requested but no MATH index at "
+                f"{_resolve_project_root(project_root) / 'data' / 'index' / 'math'}"
+            )
+        return CalcReactStrategy(llm, **_accepts(CalcReactStrategy, **kw))
+    return RagCalcReactStrategy(llm, retriever, **_accepts(RagCalcReactStrategy, **kw))
 
 
 @register("wiki_rag")
@@ -205,6 +226,7 @@ def _build_wiki_rag(
     *,
     competition_id: int | None = None,
     project_root: Path | None = None,
+    strict: bool = False,
     **kw: Any,
 ) -> Strategy:
     from polimillionaire.strategies.wiki_rag import WikiRagStrategy
@@ -214,10 +236,15 @@ def _build_wiki_rag(
         raise ValueError("wiki_rag requires competition_id (0, 1, or 2)")
     components = _wiki_components(_resolve_project_root(project_root), competition_id)
     if components is None:
+        if strict:
+            raise FileNotFoundError(
+                f"wiki_rag requested for competition {competition_id} but no "
+                f"index found under {_resolve_project_root(project_root) / 'data' / 'index'}"
+            )
         # _wiki_components already printed why; degrade silently to bare LLM.
-        return ZeroShotStrategy(llm)
+        return ZeroShotStrategy(llm, **_accepts(ZeroShotStrategy, **kw))
     retriever, bm25, reranker = components
-    return WikiRagStrategy(llm, retriever, bm25, reranker, **kw)
+    return WikiRagStrategy(llm, retriever, bm25, reranker, **_accepts(WikiRagStrategy, **kw))
 
 
 @register("auto")
