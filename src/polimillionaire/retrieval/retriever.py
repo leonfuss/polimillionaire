@@ -54,29 +54,33 @@ class Retriever:
         # share one model handle) or instantiate one matching the manifest.
         self.embedder = embedder or Embedder(self.manifest["model_name"])
 
-        embeddings = np.load(embeddings_path)
+        # mmap the embeddings so the OS pages them in lazily. FAISS still
+        # copies into its own internal storage during add(), but we never
+        # also hold a long-lived numpy copy of the full array -- on a
+        # 794k x 768 fp32 index that's a 2.3 GB CPU-RAM win.
+        embeddings = np.load(embeddings_path, mmap_mode="r")
         if embeddings.ndim != 2:
             raise ValueError(f"embeddings.npy must be 2D, got shape {embeddings.shape}")
         if embeddings.shape[1] != self.manifest["dim"]:
             raise ValueError(
                 f"manifest dim {self.manifest['dim']} != embeddings dim {embeddings.shape[1]}"
             )
-        self._embeddings = np.ascontiguousarray(embeddings, dtype=np.float32)
+        n, dim = int(embeddings.shape[0]), int(embeddings.shape[1])
 
         self._passages: list[dict[str, Any]] = [
             json.loads(line) for line in passages_path.read_text().splitlines() if line.strip()
         ]
-        if len(self._passages) != self._embeddings.shape[0]:
-            raise ValueError(
-                f"passages count {len(self._passages)} != "
-                f"embeddings count {self._embeddings.shape[0]}"
-            )
+        if len(self._passages) != n:
+            raise ValueError(f"passages count {len(self._passages)} != embeddings count {n}")
 
-        # Inner product on L2-normalised vectors == cosine similarity.
+        # Inner product on L2-normalised vectors == cosine similarity. FAISS
+        # needs a contiguous fp32 view; cast lazily and drop the reference
+        # right after add() so the mmap pages can be reclaimed.
         import faiss
 
-        self._faiss = faiss.IndexFlatIP(self._embeddings.shape[1])
-        self._faiss.add(self._embeddings)
+        self._faiss = faiss.IndexFlatIP(dim)
+        self._faiss.add(np.ascontiguousarray(embeddings, dtype=np.float32))
+        del embeddings
 
     def __len__(self) -> int:
         return len(self._passages)
