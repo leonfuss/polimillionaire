@@ -36,3 +36,5 @@ dist/
 Thumbs.db
 .vscode/
 .idea/
+embed.log
+live_game.log
