@@ -178,20 +178,46 @@ def _embed_one(seed, args: argparse.Namespace) -> None:
         print(f"embeddings + manifest already present at {out_dir}; skipping.")
         return
 
-    passages = _read_jsonl(passages_path)
+    # Strip dicts down to texts immediately so we don't carry id/metadata
+    # overhead through the encode loop -- on 800k passages this saves ~400 MB.
+    passages_raw = _read_jsonl(passages_path)
+    n = len(passages_raw)
+    texts = [p["text"] for p in passages_raw]
+    del passages_raw
+
     print(f"loading embedder {args.embedder}...")
     emb = Embedder(args.embedder)
     print(f"  device={emb.device}, dim={emb.dim}")
+    dim = emb.dim
 
-    print(f"embedding {len(passages)} chunks (batch_size={args.batch_size})...")
-    embeddings = emb.encode(
-        [p["text"] for p in passages],
-        batch_size=args.batch_size,
-        show_progress=True,
+    # Pre-allocate the .npy on disk and fill it via a memmap, so peak RAM
+    # is bounded by one chunk's encode output (~30 MB) instead of the full
+    # N x dim array (2.4 GB for 800k passages at fp32). The full-array
+    # accumulation was pushing 16 GB Macs into swap and killing throughput.
+    chunk_size = args.embed_chunk_size
+    print(
+        f"embedding {n} chunks (batch_size={args.batch_size}, "
+        f"chunk_size={chunk_size}, streaming -> {embeddings_path.name})..."
     )
-    print(f"  embeddings shape {embeddings.shape}")
-
-    np.save(embeddings_path, embeddings)
+    embeddings = np.lib.format.open_memmap(
+        embeddings_path,
+        mode="w+",
+        dtype=np.float32,
+        shape=(n, dim),
+    )
+    for start in range(0, n, chunk_size):
+        end = min(start + chunk_size, n)
+        chunk = emb.encode(
+            texts[start:end],
+            batch_size=args.batch_size,
+            show_progress=True,
+        )
+        embeddings[start:end] = chunk
+        embeddings.flush()
+        del chunk
+        print(f"  [{end}/{n} = {end / n * 100:.1f}%]")
+    del embeddings  # close memmap; ensures the file is fully flushed
+    print(f"  embeddings shape ({n}, {dim})")
 
     # populate the descriptive fields from cached intermediates if present
     titles_path = out_dir / TITLES_FILE
@@ -205,8 +231,8 @@ def _embed_one(seed, args: argparse.Namespace) -> None:
 
     manifest = {
         "model_name": args.embedder,
-        "dim": int(embeddings.shape[1]),
-        "count": int(embeddings.shape[0]),
+        "dim": dim,
+        "count": n,
         "competition_id": seed.competition_id,
         "competition_name": seed.name,
         "crawled_titles": n_titles,
@@ -261,6 +287,16 @@ def main() -> int:
         help=(
             f"embedding batch size (default: {DEFAULT_BATCH_SIZE}). "
             "Bump to 512 on T4 if VRAM allows; drop to 64 on a small GPU."
+        ),
+    )
+    parser.add_argument(
+        "--embed-chunk-size",
+        type=int,
+        default=10000,
+        help=(
+            "how many passages to encode per disk-flush (default: 10000). "
+            "Each chunk's output is written to embeddings.npy immediately and "
+            "freed, so peak RAM stays bounded instead of growing with N."
         ),
     )
     parser.add_argument(
