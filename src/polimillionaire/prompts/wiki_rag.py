@@ -25,6 +25,17 @@ _V1_SYSTEM = (
     "is correct."
 )
 
+# Variant without the rationale instruction. Pair with a schema that omits
+# the `rationale` field (make_schema(include_rationale=False)) so the model
+# returns just confidence + answer_id. Cheaper at decode time -- useful when
+# the wall-clock budget is tight and we don't need the chain-of-thought.
+_V2_NOREASON_SYSTEM = (
+    "You are an expert trivia player. Wikipedia excerpts relevant to the "
+    "question are provided below. Use them when they are helpful; rely on "
+    "your own knowledge when they are not. Commit to the option you believe "
+    "is correct."
+)
+
 
 def _format_passage(p: Passage, idx: int) -> str:
     title = p.metadata.get("title", "")
@@ -54,11 +65,27 @@ def _render_wiki_rag_v1(question: Question, passages: list[Passage]) -> list[Mes
     ]
 
 
+def _render_wiki_rag_v2_noreason(question: Question, passages: list[Passage]) -> list[Message]:
+    block = _format_passage_block(passages)
+    user_parts = []
+    if block:
+        user_parts.append(block)
+    user_parts.append(render_question_block(question))
+    return [
+        {"role": "system", "content": _V2_NOREASON_SYSTEM},
+        {"role": "user", "content": "\n\n".join(user_parts)},
+    ]
+
+
 PROMPTS: dict[str, PromptVariant] = {
     "wiki_rag/v1": PromptVariant(version="wiki_rag/v1", render=_render_wiki_rag_v1),
+    "wiki_rag/v2-noreason": PromptVariant(
+        version="wiki_rag/v2-noreason", render=_render_wiki_rag_v2_noreason
+    ),
 }
 
 LATEST = "wiki_rag/v1"
+NOREASON = "wiki_rag/v2-noreason"
 
 # legacy module-level aliases so existing callers that do `prompt.render(...)` keep working
 PROMPT_VERSION = LATEST

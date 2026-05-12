@@ -47,15 +47,19 @@ class WikiRagStrategy:
         use_dense: bool = True,
         use_sparse: bool = True,
         use_reranker: bool = True,
-        prompt_version: str = prompt.LATEST,
+        include_rationale: bool = True,
+        prompt_version: str | None = None,
         verbose: bool = False,
     ) -> None:
         if not (use_dense or use_sparse):
             raise ValueError("at least one of use_dense, use_sparse must be True")
+        # When the caller doesn't override the prompt, pick a variant whose
+        # system message matches the schema: no rationale -> noreason prompt.
+        if prompt_version is None:
+            prompt_version = prompt.LATEST if include_rationale else prompt.NOREASON
         if prompt_version not in prompt.PROMPTS:
             raise ValueError(
-                f"unknown prompt version {prompt_version!r}; "
-                f"available: {sorted(prompt.PROMPTS)}"
+                f"unknown prompt version {prompt_version!r}; available: {sorted(prompt.PROMPTS)}"
             )
         self._llm = llm
         self._retriever = retriever
@@ -68,6 +72,7 @@ class WikiRagStrategy:
         self._use_dense = use_dense
         self._use_sparse = use_sparse
         self._use_reranker = use_reranker
+        self._include_rationale = include_rationale
         self._verbose = verbose
         self._variant = prompt.PROMPTS[prompt_version]
 
@@ -115,7 +120,7 @@ class WikiRagStrategy:
             )
 
         messages = self._variant.render(question, top_passages)
-        schema = make_schema(question)
+        schema = make_schema(question, include_rationale=self._include_rationale)
 
         try:
             out = self._llm.complete_json(messages, schema)

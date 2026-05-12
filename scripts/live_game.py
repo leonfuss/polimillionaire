@@ -35,7 +35,7 @@ from polimillionaire.strategies import make_strategy
 
 # --- config -----------------------------------------------------------------
 
-COMPETITION_ID = 3  # set to whichever competition you want to play
+COMPETITION_ID = 0  # set to whichever competition you want to play
 MODEL_NAME = "qwen3-8b"
 STRATEGY_KIND = "auto"  # "auto", "wiki_rag", "rag_calc_react", "calc_react", "zero_shot"
 MAX_GAMES = 1
