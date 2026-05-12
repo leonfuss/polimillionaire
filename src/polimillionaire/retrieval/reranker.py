@@ -30,7 +30,17 @@ class Reranker:
         if self._model is None:
             from sentence_transformers import CrossEncoder
 
-            self._model = CrossEncoder(self.name, device=self.device)
+            # On CUDA, run the cross-encoder in fp16. bge-reranker-v2-m3 is
+            # XLM-RoBERTa-large (568M params); fp32 weights eat 2.27 GB of
+            # VRAM, fp16 cuts that to 1.14 GB with no measurable quality
+            # drop on ranking. MPS / CPU stay at default precision -- same
+            # rationale as Embedder.
+            kwargs: dict = {}
+            if self.device == "cuda":
+                import torch
+
+                kwargs["model_kwargs"] = {"torch_dtype": torch.float16}
+            self._model = CrossEncoder(self.name, device=self.device, **kwargs)
 
     def rerank(
         self, query: str, passages: list[Passage], *, top_k: int | None = None
