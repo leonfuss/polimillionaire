@@ -19,13 +19,83 @@ rational solutions, which are what the model needs.
 We deliberately use `sympy.sympify` rather than `eval`: sympify's parser
 rejects arbitrary Python (no imports, no attribute access, no calls outside
 sympy's allow-list) so a malformed or hostile expression fails closed.
+
+A small `STATS_LOCALS` dict adds varargs helpers for stats idioms the LLM
+reaches for naturally (`mean`, `median`, `stdev`, `variance`, `range_of`).
+Sympy has no built-in `Mean` / `Median` / `Range`-as-statistical-range, so
+without these helpers the model's natural Python-style phrasing failed
+with confusing errors in live play.
 """
 
 from __future__ import annotations
 
+from typing import Any
+
 import sympy
 
 MAX_OUTPUT_CHARS = 600
+
+
+def _to_numeric_list(args: tuple[Any, ...]) -> list[Any]:
+    """Accept either varargs (`mean(1, 2, 3)`) or a single iterable
+    (`mean([1, 2, 3])`). Sympy parses bare `[...]` as a python-style list
+    in expressions, so both call shapes hit this helper."""
+    if len(args) == 1 and hasattr(args[0], "__iter__") and not isinstance(args[0], sympy.Basic):
+        return list(args[0])
+    return list(args)
+
+
+def _stat_mean(*args: Any) -> sympy.Expr:
+    vals = _to_numeric_list(args)
+    if not vals:
+        raise ValueError("mean() requires at least one value")
+    return sympy.Rational(
+        sum(sympy.Integer(int(v)) if isinstance(v, int) else v for v in vals), 1
+    ) / len(vals)
+
+
+def _stat_median(*args: Any) -> sympy.Expr:
+    vals = sorted(_to_numeric_list(args), key=lambda x: float(x))
+    if not vals:
+        raise ValueError("median() requires at least one value")
+    n = len(vals)
+    if n % 2 == 1:
+        return sympy.sympify(vals[n // 2])
+    return (sympy.sympify(vals[n // 2 - 1]) + sympy.sympify(vals[n // 2])) / 2
+
+
+def _stat_variance(*args: Any) -> sympy.Expr:
+    """Sample variance (divide by n-1), matching scipy / R / Excel defaults."""
+    vals = _to_numeric_list(args)
+    if len(vals) < 2:
+        raise ValueError("variance() requires at least two values")
+    m = _stat_mean(*vals)
+    return sum((sympy.sympify(v) - m) ** 2 for v in vals) / (len(vals) - 1)
+
+
+def _stat_stdev(*args: Any) -> sympy.Expr:
+    return sympy.sqrt(_stat_variance(*args))
+
+
+def _stat_range(*args: Any) -> sympy.Expr:
+    """Statistical range = max - min. Named `range_of` because `range` is
+    reserved by sympy.Range (an integer iterator), which is what bit us in
+    the first live run."""
+    vals = _to_numeric_list(args)
+    if not vals:
+        raise ValueError("range_of() requires at least one value")
+    return sympy.sympify(max(vals, key=lambda x: float(x))) - sympy.sympify(
+        min(vals, key=lambda x: float(x))
+    )
+
+
+STATS_LOCALS: dict[str, Any] = {
+    "mean": _stat_mean,
+    "median": _stat_median,
+    "stdev": _stat_stdev,
+    "variance": _stat_variance,
+    "range_of": _stat_range,
+}
 
 
 def _cap(s: str) -> str:
@@ -43,10 +113,13 @@ def calc(expression: str) -> str:
         calc("sqrt(2)")               -> "sqrt(2) = 1.41421356237310"
         calc("solve(x**2 - 5*x + 6, x)") -> "[2, 3]"
         calc("1/3")                   -> "1/3 = 0.333333333333333"
+        calc("mean(10, 30, 50)")      -> "30.0000000000000"
+        calc("median(10, 30, 45, 50, 90)") -> "45.0000000000000"
+        calc("range_of(10, 30, 90)")  -> "80.0000000000000"
         calc("not a number")          -> "ERROR: ..."
     """
     try:
-        expr = sympy.sympify(expression, evaluate=True)
+        expr = sympy.sympify(expression, locals=STATS_LOCALS, evaluate=True)
     except Exception as e:  # noqa: BLE001 -- sandbox boundary, must never raise
         # sympy raises across many submodule-specific exception types
         # (SympifyError, OptionError, PolynomialError, ...) which don't

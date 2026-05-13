@@ -24,14 +24,33 @@ _V2_SYSTEM = SYSTEM = (
     '  - {"action": "calculate", "expression": "<sympy expression>"}\n'
     '  - {"action": "answer", "rationale": "...", "confidence": <0..1>, "answer_id": <int>}\n'
     "\n"
-    "Calculator syntax is sympy. Useful primitives: Rational(a, b), sqrt, pi, "
-    "factorial, log, exp, solve(expr, var), floor, ceil, summation/Sum. "
-    "When the answer options are fractions, prefer Rational(...) so the "
-    "result comes back symbolic (e.g. `3/11`) rather than as a decimal.\n"
+    "Calculator syntax is sympy. Useful primitives:\n"
+    "  - Arithmetic: +, -, *, /, ** (power). ALWAYS write * between variables.\n"
+    "  - Symbolic: Rational(a, b), sqrt, pi, E, factorial, log, exp.\n"
+    "  - Solving: solve(expr, var)  -- one variable, never a sum of variables.\n"
+    "  - Rounding: floor, ceil, abs.\n"
+    "  - Statistics: mean(v1, v2, ...), median(...), stdev(...), variance(...), range_of(...).\n"
+    "    Pass numbers as varargs: mean(10, 30, 50) -> 30. NEVER write Mean(X) or Range(X).\n"
+    "  - When options are fractions, prefer Rational(a,b) so the symbolic form\n"
+    "    comes back (e.g. `3/11`) rather than a decimal.\n"
     "\n"
-    "Use the calculator whenever arithmetic, exponents, factorials, square "
-    "roots, logs, fractions, or solving equations is involved. Do not compute "
-    "those mentally -- the calculator is more reliable. For non-numeric "
+    "Common pitfalls to avoid:\n"
+    "  - The calculator is STATELESS. It does not know any names defined in\n"
+    "    the question text. If the question says 'X = {10, 30, 45}', you must\n"
+    "    write the literal values: `mean(10, 30, 45)`, NEVER `mean(X)`.\n"
+    "    Same for Y, set A, list L, function f(x), etc. -- inline the values.\n"
+    "  - DO NOT juxtapose variables for product: write `a*b*c`, never `abc`\n"
+    "    (sympy parses `abc` as a single symbol named 'abc').\n"
+    "  - DO NOT call `solve(eq, a+b+c)` -- pick one variable to solve for.\n"
+    "  - Keep expressions short (under 200 chars). If a setup is getting long,\n"
+    "    you're probably overcomplicating; reason it out and answer directly.\n"
+    "  - For combinatorics or symbolic factoring problems where the answer\n"
+    "    follows from a clever observation rather than a numeric computation,\n"
+    "    SKIP the calculator and answer with a brief rationale.\n"
+    "\n"
+    "Use the calculator whenever concrete arithmetic, exponents, factorials,\n"
+    "square roots, logs, fractions, or solving equations is involved. Do not\n"
+    "compute those mentally -- the calculator is more reliable. For non-numeric\n"
     "questions, answer directly.\n"
     "\n"
     "When you answer, write the rationale first (no more than three sentences) "
@@ -152,6 +171,56 @@ _EXEMPLARS: list[list[Message]] = [
                         "Let x = 0.272727... Then 100x = 27.272727..., so 100x - x = 27, "
                         "giving x = 27/99. Sympy simplifies this to 3/11, which matches "
                         "option [3]."
+                    ),
+                    "confidence": 1.0,
+                    "answer_id": 3,
+                }
+            ),
+        },
+    ],
+    # 5) Statistics: mean comparison using the stats helpers. The vars
+    #    are inlined (no symbolic X, Y) because the calculator has no
+    #    notion of named datasets.
+    [
+        {
+            "role": "user",
+            "content": (
+                "Q: Consider the two sets X = {10, 30, 45, 50, 55, 70, 90} "
+                "and Y = {10, 30, 35, 50, 65, 70, 90}. Which of the following "
+                "statements is FALSE?\n"
+                "\n"
+                "Options:\n"
+                "[1] X and Y have identical ranges.\n"
+                "[2] X and Y have identical medians.\n"
+                "[3] X and Y have identical means.\n"
+                "[4] None of the above are false."
+            ),
+        },
+        {
+            "role": "assistant",
+            "content": json.dumps(
+                {
+                    "action": "calculate",
+                    "expression": "mean(10, 30, 45, 50, 55, 70, 90) - mean(10, 30, 35, 50, 65, 70, 90)",
+                }
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                "Calculator: `mean(10, 30, 45, 50, 55, 70, 90) - "
+                "mean(10, 30, 35, 50, 65, 70, 90)` = 10/7 = 1.42857142857143"
+            ),
+        },
+        {
+            "role": "assistant",
+            "content": json.dumps(
+                {
+                    "action": "answer",
+                    "rationale": (
+                        "Ranges: 90-10=80 for both -> identical. Medians: both "
+                        "sets have 50 in position 4 -> identical. Means differ by "
+                        "10/7 != 0, so option [3] is the false statement."
                     ),
                     "confidence": 1.0,
                     "answer_id": 3,

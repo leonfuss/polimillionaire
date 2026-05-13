@@ -3,6 +3,115 @@
 What we tried, what we learned, why we changed it. Newest first.
 Pairs with git history but reads like notes — the *why*, not the diff.
 
+## 2026-05-13 — Math tool: stats helpers, expression cap, anti-patterns
+
+Three coupled changes to fix the math competition (0/3 games on the first
+14B-class live run, all timeouts).
+
+**Stats helpers in the calc tool.** Live LLMs reach for `Mean(X)`,
+`Median(X)`, `Range(X)` — sympy has none of those (well, it has `Range`,
+but as an integer iterator, which is exactly what bit us). Added
+`STATS_LOCALS = {mean, median, stdev, variance, range_of}` via
+`sympify(..., locals=...)`. Helpers accept varargs (`mean(10, 30, 50)`)
+or a single iterable. Renamed the statistical range to `range_of` so
+sympy's `Range` symbol isn't shadowed.
+
+**Expression length capped at 200 chars** in `make_action_schema`. The
+first 14B run produced an 80-char `solve(abc + aec + abf + aef + dbc +
+dec + dbf + def - 1001, a + b + c + d + e + f)` that's wrong on every
+axis: `abc` parses as one symbol, the solve-var is a sum, and the
+problem doesn't need a calc at all. Capping forces concision; longer
+setups are nearly always overcomplications.
+
+**Prompt anti-patterns + stats exemplar.** New "Common pitfalls"
+section in `_V2_SYSTEM` calls out: (1) calculator is stateless — never
+reference question-text names like `X` or `f(x)`; inline literal values;
+(2) write `a*b*c`, not `abc`; (3) `solve(eq, x)` not `solve(eq, a+b+c)`;
+(4) for clever-observation problems, skip calc entirely. Added a 5th
+exemplar showing `mean(...)` usage on the same regression case that
+failed live (`X = {10, 30, 45, 50, 55, 70, 90}` vs `Y = {...}`).
+
+## 2026-05-13 — Conditional RAG: drop passages below rerank floor
+
+Live-play observation: questions where the cross-encoder's top score was
+below ~0.15 (Shawshank oak tree, Judi Dench / York Mystery Plays) had
+retrieved passages so off-topic that they actively pulled the LLM toward
+the wrong answer. Added `min_rerank_score=0.15` default on
+`WikiRagStrategy`. After rerank, passages below the floor are dropped;
+if none survive, the prompt renders with no context block and the model
+uses parametric knowledge — same path as a retrieval failure.
+
+Gated on `use_reranker=True` so callers running raw RRF (much smaller
+score scale) aren't affected. Fake rerankers in tests updated to mirror
+production behavior (overwrite `Passage.score` with their logit).
+
+## 2026-05-13 — Latency budget cuts + preload helper
+
+First live 14B-class run showed timeouts dominating: 1 entertainment
+timeout where the model *had* the correct answer, 2 science timeouts at
+30–34s, all 3 math games timed out before answering. Three changes:
+
+**Rationale length capped.** Added `maxLength: 500` (chars, ≈ ~125
+tokens) to the `rationale` field in both `make_schema` and the answer
+branch of `make_action_schema`. Default `max_tokens` on the LLM
+wrapper dropped from 512 → 256 as a belt-and-suspenders cap. Together
+these bound rationale generation to under 5s on T4 Q4_K_M.
+
+**Math `max_steps` 3 → 1.** Live runs showed the model retrying the
+same broken sympy expression three times because the prompt didn't
+give it enough info to revise. One attempt then forced commit; the
+LLM's mathematical intuition often gets the right answer even when the
+tool errors. Tests pinned to `max_steps={2,3}` where they exercise
+multi-step paths.
+
+**`polimillionaire.preload(competition_ids=...)`** eagerly downloads /
+loads embedder, reranker, and FAISS index for the listed competitions
+so the first question doesn't pay the cold-load tax. On the first run
+we saw 30+s first-question latency from bge-base + bge-reranker-base
+HF downloads + FAISS mmap warmup. Public `Embedder.preload()` /
+`Reranker.preload()` wrappers around the previously-private
+`_ensure_loaded()`.
+
+## 2026-05-13 — Per-competition retrieval tuning + nprobe knob
+
+Entertainment's 794k-passage corpus is ~4x the size of history and ~2x
+science. With the default `nprobe=32`, ~40k passages are invisible to
+dense retrieval vs ~10k on history — the relevant doc is more likely
+to fall outside the candidate window. Added `_AUTO_WIKI_DEFAULTS` in
+the strategy factory: entertainment (comp 0) auto-gets `nprobe=128,
+dense_k=100, sparse_k=100, fused_k=50, top_k=8` while history /
+science keep the defaults (already 83 / 91% in replay).
+
+`Retriever.set_nprobe(n)` exposes the IVF tuning knob at runtime;
+no-op for flat indexes. Recall at `nprobe=128` is ~99% vs ~95% at 32,
+costing ~3x search latency (still <200ms on 800k vectors).
+
+## 2026-05-13 — Smaller reranker + mmap'd IVF,PQ FAISS path
+
+Resident retrieval memory on the entertainment competition was ~3.5 GB
+(flat `IndexFlatIP` over 794k fp32 vectors + bge-reranker-v2-m3 fp16),
+co-resident with a ~5 GB LLM on a 13 GB MacBook → OOM. On Kaggle T4
+the LLM and reranker fought for cuda:0 and crashed `ggml_cuda_pool_vmm5alloc`
+mid-game.
+
+**Reranker default flipped** to `BAAI/bge-reranker-base` (278M params,
+~556 MB fp16) from `BAAI/bge-reranker-v2-m3` (568M, ~1.1 GB fp16).
+Quality difference is small on English; the floor introduced today
+(min_rerank_score=0.15) compensates further by gating low-quality
+retrievals out entirely.
+
+**FAISS index mmap'd via `IO_FLAG_MMAP`** when present. New script
+`scripts/compress_indexes.py` walks `data/index/` and builds
+`IVF{nlist},PQ{m}` indexes from existing `embeddings.npy` files using
+`METRIC_INNER_PRODUCT` (matching the existing cosine-on-normalised
+setup). Skips corpora under 40k vectors (math). `embeddings.npy` is
+now optional when `faiss.index` is present, so Kaggle dataset uploads
+can ship without the 4 GB of fp32 array.
+
+Resident dense-index memory drops ~100x: entertainment 2.3 GB → 25 MB,
+science 950 MB → 12 MB, history 600 MB → 8 MB. Recall at `nprobe=32`
+is ~95%; reranker compensates over the top-50 fused list.
+
 ## 2026-05-05 — `generated_answer` column on the predictions table
 Added a boolean `generated_answer` column. Live play always sets it
 False. We then filled in `correct_option_id_if_known` for the 10

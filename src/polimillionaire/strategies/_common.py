@@ -86,7 +86,11 @@ def make_action_schema(question: Question) -> dict[str, Any]:
                 "type": "object",
                 "properties": {
                     "action": {"type": "string", "const": "calculate"},
-                    "expression": {"type": "string"},
+                    # Cap expression length: sympy parses can hang on
+                    # pathological strings (e.g. solve(...) chains with
+                    # many juxtaposed-variable terms). 200 chars covers
+                    # every legitimate calc we've seen and forces concision.
+                    "expression": {"type": "string", "maxLength": 200},
                 },
                 "required": ["action", "expression"],
                 "additionalProperties": False,

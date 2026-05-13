@@ -37,6 +37,38 @@ def test_calc_solves_quadratic_via_solve() -> None:
     assert "[2, 3]" in out
 
 
+def test_calc_stats_mean_varargs() -> None:
+    """mean() must accept Python-style varargs since the live LLM emits
+    expressions like `mean(10, 30, 50)` rather than the (unsupported)
+    `mean(X)` reference to a question-text symbol."""
+    assert calc("mean(10, 30, 50)").startswith("30")
+    # the regression-case mean comparison from comp 3 game 2 question 1
+    assert calc("mean(10, 30, 45, 50, 55, 70, 90)").startswith("50")
+
+
+def test_calc_stats_median() -> None:
+    # odd count: middle element
+    assert calc("median(10, 30, 45, 50, 90)").startswith("45")
+    # even count: avg of middle two
+    assert "30" in calc("median(10, 20, 40, 50)")
+
+
+def test_calc_stats_range_of() -> None:
+    """range_of, not range -- sympy.Range is an integer iterator, which
+    is exactly what bit us when the LLM emitted `Range(X)` in a live run."""
+    assert calc("range_of(10, 30, 90)").startswith("80")
+
+
+def test_calc_stats_stdev_returns_symbolic_form() -> None:
+    """Standard deviation uses sample variance (n-1 denominator). The
+    canonical wikipedia example {2,4,4,4,5,5,7,9} has variance 32/7."""
+    out = calc("variance(2, 4, 4, 4, 5, 5, 7, 9)")
+    assert "32/7" in out
+    # stdev = sqrt(variance) — symbolic form so the model can match
+    # against irrational option labels.
+    assert "sqrt" in calc("stdev(2, 4, 4, 4, 5, 5, 7, 9)")
+
+
 def test_calc_truncates_pathologically_large_results() -> None:
     """Regression: a cubic system whose `solve(...)` returned 16 solutions
     with massive complex symbolic forms produced a tens-of-thousands-of-chars
