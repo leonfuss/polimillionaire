@@ -199,8 +199,8 @@ def test_strategy_recovers_when_action_step_overflows_max_tokens() -> None:
 
 def test_math_tir_prompt_variant_renders_with_specialist_system_message() -> None:
     """The math-tir prompt swaps the generalist 'trivia player' system message
-    for an explicit Qwen2.5-Math specialist framing, but reuses the same
-    JSON action schema and 5 exemplars so the strategy machinery is unchanged.
+    for an explicit math-specialist framing, but reuses the same JSON action
+    schema and exemplars so the strategy machinery is unchanged.
     """
     from polimillionaire.prompts import calc_react as prompt
 
@@ -214,10 +214,12 @@ def test_math_tir_prompt_variant_renders_with_specialist_system_message() -> Non
     decision = strategy(_make_question(), Context(competition_id=3, level=2))
 
     # The system message of the first LLM call should be the math-specialist
-    # one, not the generalist v2 one.
+    # one, not the generalist v2 one. v2 opens with "expert trivia player";
+    # math-tir opens with "math specialist".
     system_msg = fake.calls[0][0][0]
     assert system_msg["role"] == "system"
-    assert "Qwen2.5-Math" in system_msg["content"]
+    assert "math specialist" in system_msg["content"]
+    assert "trivia player" not in system_msg["content"]
     assert decision.prompt_version == "math-tir"
     assert decision.option_id == 2
 

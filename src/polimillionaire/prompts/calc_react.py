@@ -209,7 +209,7 @@ _EXEMPLARS: list[list[Message]] = [
             "role": "user",
             "content": (
                 "Q: Consider the two sets X = {10, 30, 45, 50, 55, 70, 90} "
-                "and Y = {10, 30, 35, 50, 65, 70, 90}. Which of the following "
+                "and Y = {10, 30, 35, 50, 60, 65, 90}. Which of the following "
                 "statements is FALSE?\n"
                 "\n"
                 "Options:\n"
@@ -224,7 +224,7 @@ _EXEMPLARS: list[list[Message]] = [
             "content": json.dumps(
                 {
                     "action": "calculate",
-                    "expression": "mean(10, 30, 45, 50, 55, 70, 90) - mean(10, 30, 35, 50, 65, 70, 90)",
+                    "expression": "mean(10, 30, 45, 50, 55, 70, 90) - mean(10, 30, 35, 50, 60, 65, 90)",
                 }
             ),
         },
@@ -232,7 +232,7 @@ _EXEMPLARS: list[list[Message]] = [
             "role": "user",
             "content": (
                 "Calculator: `mean(10, 30, 45, 50, 55, 70, 90) - "
-                "mean(10, 30, 35, 50, 65, 70, 90)` = 10/7 = 1.42857142857143"
+                "mean(10, 30, 35, 50, 60, 65, 90)` = 10/7 = 1.42857142857143"
             ),
         },
         {
@@ -401,9 +401,8 @@ EXEMPLAR_MESSAGES: list[Message] = [m for ex in _EXEMPLARS for m in ex]
 # Python blocks; this prompt bridges that training to our JSON schema by
 # being very explicit about output shape.
 _MATH_TIR_SYSTEM = MATH_TIR_SYSTEM = (
-    "You are Qwen2.5-Math, a model specialized in mathematical reasoning. "
-    "You have access to a sympy calculator tool. Use it for any non-trivial "
-    "computation.\n"
+    "You are a math specialist with access to a sympy calculator tool. "
+    "Use it for any non-trivial computation.\n"
     "\n"
     "On every turn, output JSON matching exactly one of these two shapes:\n"
     '  - {"action": "calculate", "expression": "<sympy expression>"}\n'

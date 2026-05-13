@@ -3,6 +3,29 @@
 What we tried, what we learned, why we changed it. Newest first.
 Pairs with git history but reads like notes — the *why*, not the diff.
 
+## 2026-05-13 — math-tir prompt: model-agnostic identity + stats exemplar fix
+
+Two cleanup-quality fixes after a notebook audit:
+
+- **System message identity is now model-agnostic.** The opening line read
+  "You are Qwen2.5-Math, a model specialized in mathematical reasoning"
+  — written when the math route still ran the specialist. It's been
+  Qwen3-14B for several runs, so the line was misleading without
+  affecting behavior. Now reads: "You are a math specialist with access
+  to a sympy calculator tool." Test updated to assert the new substring.
+
+- **Stats exemplar was numerically wrong.** Both X and Y in the
+  "X = {10, 30, 45, 50, 55, 70, 90}, Y = {10, 30, 35, 50, 65, 70, 90}"
+  exemplar summed to 350, so the means were equal and the exemplar's
+  claim that the difference is 10/7 (and that option [3] is the false
+  statement) was mathematically false — the correct answer would have
+  been "none of the above are false". Y is now {10, 30, 35, 50, 60, 65,
+  90}: sum 340, mean_X - mean_Y = 10/7, while median and range still
+  match X. The narrative and answer_id stay intact.
+
+Verified all 7 exemplars against the live `calc` tool — all 7 now
+produce exactly the result the exemplar claims.
+
 ## 2026-05-13 — Plug-and-verify meta-strategy + math-tir max_steps=3 default
 
 Live L5 (rose curve r = sin(3θ), vertical-tangent in first quadrant)
