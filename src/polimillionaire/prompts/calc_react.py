@@ -29,6 +29,9 @@ _V2_SYSTEM = SYSTEM = (
     "  - Symbolic: Rational(a, b), sqrt, pi, E, factorial, log, exp.\n"
     "  - Solving: solve(expr, var)  -- one variable, never a sum of variables.\n"
     "  - Rounding: floor, ceil, abs.\n"
+    "  - Number theory: gcd(a, b), lcm(a, b), divisors(n), divisor_count(n),\n"
+    "    factorint(n). Use divisor_count(n) for COUNTS -- `len(divisors(n))`\n"
+    "    returns a Python int that the calculator rejects.\n"
     "  - Statistics: mean(v1, v2, ...), median(...), stdev(...), variance(...), range_of(...).\n"
     "    Pass numbers as varargs: mean(10, 30, 50) -> 30. NEVER write Mean(X) or Range(X).\n"
     "  - When options are fractions, prefer Rational(a,b) so the symbolic form\n"
@@ -228,6 +231,49 @@ _EXEMPLARS: list[list[Message]] = [
             ),
         },
     ],
+    # 6) Common factors via gcd + divisor_count. Models reach for
+    #    `len(divisors(n))` which evaluates to a Python int and the calc
+    #    tool rejects non-sympy results; divisor_count returns a sympy
+    #    Integer directly. Common factors of A, B = divisors of gcd(A, B).
+    [
+        {
+            "role": "user",
+            "content": (
+                "Q: How many positive integers are common factors of 36 and 48?\n"
+                "\n"
+                "Options:\n"
+                "[1] 4\n"
+                "[2] 5\n"
+                "[3] 6\n"
+                "[4] 8"
+            ),
+        },
+        {
+            "role": "assistant",
+            "content": json.dumps(
+                {"action": "calculate", "expression": "divisor_count(gcd(36, 48))"}
+            ),
+        },
+        {
+            "role": "user",
+            "content": "Calculator: `divisor_count(gcd(36, 48))` = 6.00000000000000",
+        },
+        {
+            "role": "assistant",
+            "content": json.dumps(
+                {
+                    "action": "answer",
+                    "rationale": (
+                        "Common factors of A and B are exactly the divisors of "
+                        "gcd(A, B). gcd(36, 48) = 12, which has 6 divisors "
+                        "(1, 2, 3, 4, 6, 12)."
+                    ),
+                    "confidence": 1.0,
+                    "answer_id": 3,
+                }
+            ),
+        },
+    ],
     # 4) Quadratic -> interval between roots, via sympy.solve.
     [
         {
@@ -296,6 +342,9 @@ _MATH_TIR_SYSTEM = MATH_TIR_SYSTEM = (
     "  - Symbolic: Rational(a, b), sqrt, pi, E, factorial, log, exp.\n"
     "  - Solving: solve(expr, var)  -- one variable, never a sum.\n"
     "  - Rounding: floor, ceil, abs.\n"
+    "  - Number theory: gcd(a, b), lcm(a, b), divisors(n), divisor_count(n),\n"
+    "    factorint(n). Use divisor_count(n) for COUNTS -- `len(divisors(n))`\n"
+    "    returns a Python int that the calculator rejects.\n"
     "  - Statistics: mean(v1, v2, ...), median(...), stdev(...), variance(...), range_of(...).\n"
     "    Pass numbers as varargs: mean(10, 30, 50) -> 30.\n"
     "  - When options are fractions, prefer Rational(a,b) so the symbolic form\n"

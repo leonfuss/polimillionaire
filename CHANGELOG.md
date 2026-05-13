@@ -3,6 +3,32 @@
 What we tried, what we learned, why we changed it. Newest first.
 Pairs with git history but reads like notes — the *why*, not the diff.
 
+## 2026-05-13 — Math prompts: number-theory primitives + divisor-counting exemplar
+
+Live run hit a self-correcting but slow failure on L5 ("how many positive
+integers are factors of 120 and also factors of 40?"): the model reached
+for `len(divisors(40))` (twice), got `ERROR: unexpected non-sympy result:
+int` both times, and finally landed on `Rational(8)` after burning ~20s
+on three calc steps.
+
+Root cause: our calc tool only accepts sympy results, but `len(...)`
+returns a Python `int` that gets rejected at the type guard. Models
+trained on Python don't know that.
+
+Two coupled changes to make this one-shot next time:
+
+- **Both system prompts (v2 and math-tir) now list number-theory
+  primitives explicitly**: `gcd, lcm, divisors, divisor_count, factorint`.
+  The block also calls out the pitfall: use `divisor_count(n)` for counts,
+  NOT `len(divisors(n))`.
+- **New exemplar added to `_EXEMPLARS`** (slot 6, between the stats and
+  quadratic examples): "common factors of 36 and 48" via
+  `divisor_count(gcd(36, 48))`. Teaches the model the canonical pattern
+  for "how many factors of A and B" questions in a single calc step.
+
+Affects both `calc_react` and `rag_calc_react` (they share
+`EXEMPLAR_MESSAGES`).
+
 ## 2026-05-13 — Math route: bigger token budget + parse-failure logging
 
 First live run with `qwen2.5-math-7b` + `math-tir` lost all 3 games at
