@@ -3,6 +3,38 @@
 What we tried, what we learned, why we changed it. Newest first.
 Pairs with git history but reads like notes — the *why*, not the diff.
 
+## 2026-05-13 — Math prompts: sympy/Python guardrails + dict-result support
+
+Live runs surfaced six recurring calc-tool syntax failures, all from the
+model treating the calculator as a Python REPL:
+
+- `f(2) = ...; f(-2) = ...` — Python statements with `=` and `;` chaining
+- `sum(1/2**n for n in 1..3)` — Python comprehension + Ruby-style `1..3`
+- `(-1,0,1) ⋅ (1,2t,3t²)` — unicode dot operator, undefined vector mul
+- `norm.ppf(0.25, 45, 4)` — scipy.stats namespace doesn't exist in sympy
+- `factor(240)` — sympy.factor is for polynomials, not integers
+- `factorint(240)` — *would have* been right, but calc rejected the dict
+
+The first five are prompt issues; the sixth is a calc-tool bug I caused
+last commit when I added `factorint` to the recommended primitives
+without checking the type guard.
+
+Three coupled changes:
+
+- **`calc` tool now accepts `dict` results** alongside lists/tuples.
+  `factorint(n)` returns `{prime: power}` with all sympy Integer keys and
+  values — same sandbox guarantees as the existing list/tuple branch
+  (sympify blocks exfiltration at the parser layer regardless of the
+  return type).
+- **Both system prompts (v2 and math-tir) get three new pitfall rules**:
+  one-expression-per-call (no `=`/`;`/comprehensions/`1..3`), no unicode
+  math operators (with explicit "write dot products as `a1*b1 + a2*b2`"
+  example), and no scipy/`norm.ppf` with z-score values from memory for
+  the common quantiles (.25, .75, .95, .975).
+- **Primitives sections expanded** with `Sum(expr, (var, a, b))`,
+  `Integral(...)` / `integrate(...)`, and `oo` for infinity. Note added
+  that `factor(n)` does NOT factor integers — use `factorint(n)`.
+
 ## 2026-05-13 — Math prompts: number-theory primitives + divisor-counting exemplar
 
 Live run hit a self-correcting but slow failure on L5 ("how many positive

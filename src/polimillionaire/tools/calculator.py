@@ -127,11 +127,12 @@ def calc(expression: str) -> str:
         # through the calc-react loop and crashes the run.
         return f"ERROR: {type(e).__name__}: {e}"
 
-    # solve(), Sum(), etc. return Python lists/tuples — render as-is.
-    # We allow this narrowly (not via hasattr) because sympify happily evaluates
-    # arbitrary Python (e.g. `__import__("os").system(...)` returns int 0);
-    # admitting only sympy objects + list/tuple keeps that exfiltration shut.
-    if isinstance(expr, list | tuple):
+    # solve(), Sum(), factorint() etc. return Python lists/tuples/dicts —
+    # render as-is. We allow this narrowly (not via hasattr) because sympify
+    # happily evaluates arbitrary Python (e.g. `__import__("os").system(...)`
+    # returns int 0); admitting only sympy objects + list/tuple/dict keeps
+    # that exfiltration shut.
+    if isinstance(expr, list | tuple | dict):
         return _cap(str(expr))
     if not isinstance(expr, sympy.Basic):
         return f"ERROR: unexpected non-sympy result: {type(expr).__name__}"
