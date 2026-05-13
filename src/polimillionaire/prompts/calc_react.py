@@ -63,6 +63,13 @@ _V2_SYSTEM = SYSTEM = (
     "  - For combinatorics or symbolic factoring problems where the answer\n"
     "    follows from a clever observation rather than a numeric computation,\n"
     "    SKIP the calculator and answer with a brief rationale.\n"
+    "  - PLUG-AND-VERIFY: when `solve()` returns a wall of complex or huge\n"
+    "    symbolic roots and the question is multiple-choice with specific\n"
+    "    candidate values, ABANDON solve() and substitute each option into\n"
+    "    the original expression in one calc call:\n"
+    "    `[expr_at_opt1, expr_at_opt2, expr_at_opt3]` (spell out the\n"
+    "    expression three times with each value substituted). The option\n"
+    "    whose value is ~0 (or matches the expected target) is the answer.\n"
     "\n"
     "Use the calculator whenever concrete arithmetic, exponents, factorials,\n"
     "square roots, logs, fractions, or solving equations is involved. Do not\n"
@@ -287,6 +294,58 @@ _EXEMPLARS: list[list[Message]] = [
             ),
         },
     ],
+    # 7) Plug-and-verify when solve() returns garbage. Substitute each
+    #    option into the original expression; the one closest to 0 wins.
+    #    Spelled-out substitution (no Python comprehension — sympify rejects).
+    [
+        {
+            "role": "user",
+            "content": (
+                "Q: For which value of theta in [0, pi/2] does\n"
+                "cos(2*theta) + sin(theta) = 0?\n"
+                "\n"
+                "Options:\n"
+                "[1] pi/6\n"
+                "[2] pi/4\n"
+                "[3] pi/3\n"
+                "[4] pi/2"
+            ),
+        },
+        {
+            "role": "assistant",
+            "content": json.dumps(
+                {
+                    "action": "calculate",
+                    "expression": (
+                        "[cos(2*pi/6) + sin(pi/6), cos(2*pi/4) + sin(pi/4), "
+                        "cos(2*pi/3) + sin(pi/3), cos(2*pi/2) + sin(pi/2)]"
+                    ),
+                }
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                "Calculator: `[cos(2*pi/6) + sin(pi/6), ...]` = "
+                "[1, sqrt(2)/2, -1/2 + sqrt(3)/2, 0]"
+            ),
+        },
+        {
+            "role": "assistant",
+            "content": json.dumps(
+                {
+                    "action": "answer",
+                    "rationale": (
+                        "Plug each option into cos(2*theta) + sin(theta). "
+                        "Only pi/2 gives 0 (cos(pi) + sin(pi/2) = -1 + 1). "
+                        "The others are 1, sqrt(2)/2, and (sqrt(3)-1)/2 != 0."
+                    ),
+                    "confidence": 1.0,
+                    "answer_id": 4,
+                }
+            ),
+        },
+    ],
     # 4) Quadratic -> interval between roots, via sympy.solve.
     [
         {
@@ -395,6 +454,13 @@ _MATH_TIR_SYSTEM = MATH_TIR_SYSTEM = (
     "  - Keep expressions short (under 200 chars).\n"
     "  - Do NOT emit \\boxed{...} or other LaTeX wrappers; the only output channel\n"
     "    is the JSON above.\n"
+    "  - PLUG-AND-VERIFY: when `solve()` returns a wall of complex or huge\n"
+    "    symbolic roots and the question is multiple-choice with specific\n"
+    "    candidate values, ABANDON solve() and substitute each option into\n"
+    "    the original expression in one calc call:\n"
+    "    `[expr_at_opt1, expr_at_opt2, expr_at_opt3]` (spell out the\n"
+    "    expression three times with each value substituted). The option\n"
+    "    whose value is ~0 (or matches the expected target) is the answer.\n"
     "\n"
     "When you answer, write the rationale first (no more than three sentences) "
     "and only commit to an answer_id consistent with both the rationale and "

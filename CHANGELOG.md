@@ -3,6 +3,38 @@
 What we tried, what we learned, why we changed it. Newest first.
 Pairs with git history but reads like notes — the *why*, not the diff.
 
+## 2026-05-13 — Plug-and-verify meta-strategy + math-tir max_steps=3 default
+
+Live L5 (rose curve r = sin(3θ), vertical-tangent in first quadrant)
+showed an entirely different failure mode: the model wrote a not-quite-
+correct setup, sympy returned a 1480-char wall of complex/algebraic
+roots, the model spent 85 seconds parsing it, and the question timed
+out. The right move on a multiple-choice question with specific
+candidate values is to ABANDON solve() and substitute each option back
+into the original expression — one calc call, ~1 second, unambiguous.
+
+Three coupled changes:
+
+- **Both system prompts (v2 and math-tir) get a "PLUG-AND-VERIFY"
+  pitfall** spelling out the pattern: when solve() returns a wall of
+  complex roots and the question is multiple-choice, write
+  `[expr_at_opt1, expr_at_opt2, expr_at_opt3]` (with each option
+  literally substituted) and pick the one whose value is ~0. No Python
+  comprehension — sympify rejects those (see prior commit).
+
+- **New exemplar in `_EXEMPLARS`** (slot 7, between stats and the
+  quadratic example) demonstrates the pattern end-to-end:
+  "cos(2θ) + sin(θ) = 0, options {π/6, π/4, π/3, π/2}" → one calc call
+  returns `[1, sqrt(2)/2, -1/2 + sqrt(3)/2, 0]`, model reads off the
+  last entry and commits to option [4].
+
+- **Factory: math-tir now defaults to `max_steps=3`** alongside the
+  existing `max_tokens=768`. The plug-and-verify pattern naturally
+  unfolds as: try symbolic solve → see junk → retry with substitutions
+  → answer. That's three actions, which requires max_steps≥3. Users
+  validated max_steps=3 in live play before this commit. Explicit
+  caller-provided max_steps still wins.
+
 ## 2026-05-13 — Math prompts: sympy/Python guardrails + dict-result support
 
 Live runs surfaced six recurring calc-tool syntax failures, all from the

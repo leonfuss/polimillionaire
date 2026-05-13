@@ -216,16 +216,26 @@ def _build_zero_shot(
     return ZeroShotStrategy(llm, **_accepts(ZeroShotStrategy, **kw))
 
 
-# Token budget bump for the math specialist: Qwen2.5-Math fights the JSON
-# grammar with verbose CoT and truncates mid-object at the global 256 default.
-# 768 has empirically been enough room for the action schema's `oneOf` branch.
+# Math-tir route defaults:
+# - max_tokens=768: the action schema's `oneOf` branch needs room beyond
+#   the global 256 default; lets the model write rationale + calc args
+#   without truncating mid-JSON.
+# - max_steps=3: math benefits from retry headroom (try symbolic solve →
+#   notice junk output → fall back to plug-and-verify → answer). Validated
+#   in live play.
 _MATH_TIR_MAX_TOKENS = 768
+_MATH_TIR_MAX_STEPS = 3
 
 
 def _apply_math_tir_defaults(kw: dict[str, Any]) -> dict[str, Any]:
-    if kw.get("prompt_version") == "math-tir" and "max_tokens" not in kw:
-        return {**kw, "max_tokens": _MATH_TIR_MAX_TOKENS}
-    return kw
+    if kw.get("prompt_version") != "math-tir":
+        return kw
+    overrides: dict[str, Any] = {}
+    if "max_tokens" not in kw:
+        overrides["max_tokens"] = _MATH_TIR_MAX_TOKENS
+    if "max_steps" not in kw:
+        overrides["max_steps"] = _MATH_TIR_MAX_STEPS
+    return {**kw, **overrides} if overrides else kw
 
 
 @register("calc_react")
