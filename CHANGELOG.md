@@ -3,6 +3,35 @@
 What we tried, what we learned, why we changed it. Newest first.
 Pairs with git history but reads like notes — the *why*, not the diff.
 
+## 2026-05-13 — Math specialist: Qwen2.5-Math-7B + math-tir prompt
+
+Registered `qwen2.5-math-7b` in MODELS (bartowski's
+`Qwen2.5-Math-7B-Instruct-GGUF`, Q4_K_M, ~4.5 GB). Per Qwen's reports:
+~83% on MATH benchmark vs ~58% for a generalist 7B. Natively trained
+for tool-integrated reasoning (TIR), which suits our existing
+`calc_react` action schema once the prompt makes that mapping explicit.
+
+Operating pattern: one model resident at a time (Option B from today's
+plan). The team's notebook unloads the general LLM via `load_llm(...)`
+between sweeps and explicitly builds the math route with the new
+specialist + the `math-tir` prompt:
+
+    math_llm = load_llm("qwen2.5-math-7b")         # auto-unloads general
+    math_strategy = make_strategy(
+        "rag_calc_react", math_llm, prompt_version="math-tir"
+    )
+
+New prompt variants registered as `"math-tir"` in both
+`prompts/calc_react.py` and `prompts/rag_calc_react.py`. The
+system message:
+- Drops the generalist "trivia player" framing for an explicit
+  Qwen2.5-Math specialist role.
+- Reuses the same JSON action schema and 5 exemplars.
+- Tells the model NOT to emit `\boxed{...}` (Qwen2.5-Math's default
+  final-answer wrapper, which would parse-fail under the JSON grammar).
+- Carries forward the pitfalls section: don't reference question-text
+  names, write `a*b*c` not `abc`, etc.
+
 ## 2026-05-13 — Math tool: stats helpers, expression cap, anti-patterns
 
 Three coupled changes to fix the math competition (0/3 games on the first

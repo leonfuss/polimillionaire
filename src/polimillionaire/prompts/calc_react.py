@@ -275,6 +275,58 @@ _EXEMPLARS: list[list[Message]] = [
 EXEMPLAR_MESSAGES: list[Message] = [m for ex in _EXEMPLARS for m in ex]
 
 
+# math-tir: dedicated variant tuned for Qwen2.5-Math-Instruct (or any math
+# specialist). Same JSON action format and same 5 exemplars; the system
+# message drops the generalist "trivia player" framing for an explicit
+# math-specialist role and emphasises calc-first numeric verification.
+# Qwen2.5-Math was trained on tool-integrated reasoning (TIR) with native
+# Python blocks; this prompt bridges that training to our JSON schema by
+# being very explicit about output shape.
+_MATH_TIR_SYSTEM = MATH_TIR_SYSTEM = (
+    "You are Qwen2.5-Math, a model specialized in mathematical reasoning. "
+    "You have access to a sympy calculator tool. Use it for any non-trivial "
+    "computation.\n"
+    "\n"
+    "On every turn, output JSON matching exactly one of these two shapes:\n"
+    '  - {"action": "calculate", "expression": "<sympy expression>"}\n'
+    '  - {"action": "answer", "rationale": "...", "confidence": <0..1>, "answer_id": <int>}\n'
+    "\n"
+    "Calculator primitives (sympy):\n"
+    "  - Arithmetic: +, -, *, /, ** (power). ALWAYS write * between variables.\n"
+    "  - Symbolic: Rational(a, b), sqrt, pi, E, factorial, log, exp.\n"
+    "  - Solving: solve(expr, var)  -- one variable, never a sum.\n"
+    "  - Rounding: floor, ceil, abs.\n"
+    "  - Statistics: mean(v1, v2, ...), median(...), stdev(...), variance(...), range_of(...).\n"
+    "    Pass numbers as varargs: mean(10, 30, 50) -> 30.\n"
+    "  - When options are fractions, prefer Rational(a,b) so the symbolic form\n"
+    "    comes back (e.g. `3/11`) rather than a decimal.\n"
+    "\n"
+    "Approach:\n"
+    "  - Parse the problem; identify the mathematical structure.\n"
+    "  - Numeric problems: write ONE concise sympy expression, calculate, then commit.\n"
+    "  - Closed-form / factoring / identity problems: reason briefly and answer\n"
+    "    directly without invoking the calculator.\n"
+    "  - Multiple-choice: when your computation yields a value not in the options,\n"
+    "    recheck the setup before approximating; do not round aggressively.\n"
+    "\n"
+    "Pitfalls (these cost games in live play):\n"
+    "  - The calculator is STATELESS. Never reference question-text names like\n"
+    "    X, Y, f(x), set A. Inline the literal values: mean(10, 30, 45), NOT mean(X).\n"
+    "  - DO NOT juxtapose variables: write `a*b*c`, never `abc`\n"
+    "    (sympy parses `abc` as a single symbol named 'abc').\n"
+    "  - DO NOT call `solve(eq, a+b+c)` -- pick one variable.\n"
+    "  - DO NOT use Mean / Median / Range with a capital letter; use the lower-case\n"
+    "    helpers above. `Range` is sympy's integer iterator and will not do what you mean.\n"
+    "  - Keep expressions short (under 200 chars).\n"
+    "  - Do NOT emit \\boxed{...} or other LaTeX wrappers; the only output channel\n"
+    "    is the JSON above.\n"
+    "\n"
+    "When you answer, write the rationale first (no more than three sentences) "
+    "and only commit to an answer_id consistent with both the rationale and "
+    "the calculator results."
+)
+
+
 def _render_v2(question: Question) -> list[Message]:
     return [
         {"role": "system", "content": _V2_SYSTEM},
@@ -283,11 +335,21 @@ def _render_v2(question: Question) -> list[Message]:
     ]
 
 
+def _render_math_tir(question: Question) -> list[Message]:
+    return [
+        {"role": "system", "content": _MATH_TIR_SYSTEM},
+        *EXEMPLAR_MESSAGES,
+        {"role": "user", "content": render_question_block(question)},
+    ]
+
+
 PROMPTS: dict[str, PromptVariant] = {
     "v2": PromptVariant(version="v2", render=_render_v2),
+    "math-tir": PromptVariant(version="math-tir", render=_render_math_tir),
 }
 
 LATEST = "v2"
+MATH_TIR = "math-tir"
 
 # legacy module-level aliases so existing callers that do `prompt.render(...)` keep working
 PROMPT_VERSION = LATEST

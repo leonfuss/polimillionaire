@@ -197,6 +197,31 @@ def test_strategy_recovers_when_action_step_overflows_max_tokens() -> None:
     assert "oneOf" not in forced_schema
 
 
+def test_math_tir_prompt_variant_renders_with_specialist_system_message() -> None:
+    """The math-tir prompt swaps the generalist 'trivia player' system message
+    for an explicit Qwen2.5-Math specialist framing, but reuses the same
+    JSON action schema and 5 exemplars so the strategy machinery is unchanged.
+    """
+    from polimillionaire.prompts import calc_react as prompt
+
+    assert "math-tir" in prompt.PROMPTS
+    fake = _ScriptedLLM(
+        [
+            {"action": "answer", "rationale": "x", "confidence": 0.9, "answer_id": 2},
+        ]
+    )
+    strategy = CalcReactStrategy(cast(LLM, fake), prompt_version="math-tir")
+    decision = strategy(_make_question(), Context(competition_id=3, level=2))
+
+    # The system message of the first LLM call should be the math-specialist
+    # one, not the generalist v2 one.
+    system_msg = fake.calls[0][0][0]
+    assert system_msg["role"] == "system"
+    assert "Qwen2.5-Math" in system_msg["content"]
+    assert decision.prompt_version == "math-tir"
+    assert decision.option_id == 2
+
+
 def test_strategy_falls_back_to_first_option_when_forced_answer_also_fails() -> None:
     """Last-resort: if even the answer-only schema fails to parse, return a
     valid AnswerDecision pointing at the first option (confidence 0) so the

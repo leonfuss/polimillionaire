@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING
 from polimillionaire._vendor.millionaire_client.models import Question
 from polimillionaire.llm import Message
 from polimillionaire.prompts._common import PromptVariant, render_question_block
-from polimillionaire.prompts.calc_react import EXEMPLAR_MESSAGES, SYSTEM
+from polimillionaire.prompts.calc_react import EXEMPLAR_MESSAGES, MATH_TIR_SYSTEM, SYSTEM
 
 if TYPE_CHECKING:
     # `Passage` is only used as a type annotation; deferred so this prompt
@@ -63,11 +63,13 @@ def _format_reference_block(passages: list[Passage]) -> str:
     )
 
 
-def _render_rag_v1(question: Question, references: list[Passage]) -> list[Message]:
-    system = SYSTEM
+def _render_with_system(
+    base_system: str, question: Question, references: list[Passage]
+) -> list[Message]:
+    system = base_system
     block = _format_reference_block(references)
     if block:
-        system = SYSTEM + "\n\n---\n\n" + block
+        system = base_system + "\n\n---\n\n" + block
     return [
         {"role": "system", "content": system},
         *EXEMPLAR_MESSAGES,
@@ -75,11 +77,23 @@ def _render_rag_v1(question: Question, references: list[Passage]) -> list[Messag
     ]
 
 
+def _render_rag_v1(question: Question, references: list[Passage]) -> list[Message]:
+    return _render_with_system(SYSTEM, question, references)
+
+
+def _render_math_tir(question: Question, references: list[Passage]) -> list[Message]:
+    """RAG-augmented math-tir: same math-specialist system message as the
+    bare calc_react math-tir variant, with retrieved problems appended."""
+    return _render_with_system(MATH_TIR_SYSTEM, question, references)
+
+
 PROMPTS: dict[str, PromptVariant] = {
     "rag-v1": PromptVariant(version="rag-v1", render=_render_rag_v1),
+    "math-tir": PromptVariant(version="math-tir", render=_render_math_tir),
 }
 
 LATEST = "rag-v1"
+MATH_TIR = "math-tir"
 
 # legacy module-level aliases so existing callers that do `prompt.render(...)` keep working
 PROMPT_VERSION = LATEST

@@ -68,6 +68,14 @@ MODELS: dict[str, ModelSpec] = {
         repo_id="bartowski/phi-4-GGUF",
         filename="*Q4_K_M*.gguf",
     ),
+    # Math specialist. ~83% on the MATH benchmark vs ~58% for generalist 7B;
+    # natively trained for tool-integrated reasoning (TIR). Pair with the
+    # "math-tir" prompt variant in calc_react / rag_calc_react. No /no_think
+    # suffix: Qwen2.5-Math uses standard ChatML, no thinking-mode switch.
+    "qwen2.5-math-7b": ModelSpec(
+        repo_id="bartowski/Qwen2.5-Math-7B-Instruct-GGUF",
+        filename="*Q4_K_M*.gguf",
+    ),
 }
 
 
