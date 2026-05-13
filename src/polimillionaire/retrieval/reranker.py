@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 from polimillionaire.retrieval.embedder import select_device
 from polimillionaire.retrieval.retriever import Passage
 
-DEFAULT_RERANKER = "BAAI/bge-reranker-v2-m3"
+DEFAULT_RERANKER = "BAAI/bge-reranker-base"
 
 
 class Reranker:
@@ -30,9 +30,9 @@ class Reranker:
         if self._model is None:
             from sentence_transformers import CrossEncoder
 
-            # On CUDA, run the cross-encoder in fp16. bge-reranker-v2-m3 is
-            # XLM-RoBERTa-large (568M params); fp32 weights eat 2.27 GB of
-            # VRAM, fp16 cuts that to 1.14 GB with no measurable quality
+            # On CUDA, run the cross-encoder in fp16. bge-reranker-base is
+            # XLM-RoBERTa-base (278M params); fp32 weights eat 1.11 GB of
+            # VRAM, fp16 cuts that to ~556 MB with no measurable quality
             # drop on ranking. MPS / CPU stay at default precision -- same
             # rationale as Embedder.
             kwargs: dict = {}
