@@ -169,6 +169,34 @@ def test_strategy_force_answers_after_step_cap() -> None:
     assert "Step limit reached" in forced_messages[-1]["content"]
 
 
+def test_strategy_short_circuits_on_duplicate_calc_expression() -> None:
+    """If the model emits the SAME calc expression two steps in a row (a
+    pattern we've seen when it ignores an ERROR result), abandon the action
+    loop and force an answer rather than burning the remaining budget on
+    the same broken expression."""
+    fake = _ScriptedLLM(
+        [
+            {"action": "calculate", "expression": "broken_thing"},
+            # Same expression again -- model ignored the previous result.
+            {"action": "calculate", "expression": "broken_thing"},
+            # Forced-answer call (answer-only schema, no `action` key).
+            {"rationale": "fallback", "confidence": 0.5, "answer_id": 2},
+        ]
+    )
+    # max_steps=4 gives plenty of room; the short-circuit should fire on the
+    # duplicate at step 2 and skip directly to the forced-answer call.
+    strategy = CalcReactStrategy(cast(LLM, fake), max_steps=4)
+    decision = strategy(_make_question(), Context(competition_id=0, level=2))
+
+    # Three calls total: the two duplicate action steps and one forced answer.
+    # If duplicate detection didn't fire we'd see four action calls.
+    assert len(fake.calls) == 3
+    assert decision.option_id == 2
+
+    forced_messages = fake.calls[-1][0]
+    assert "Step limit reached" in forced_messages[-1]["content"]
+
+
 def test_strategy_rejects_zero_max_steps() -> None:
     fake = _ScriptedLLM([])
     with pytest.raises(ValueError, match="max_steps"):

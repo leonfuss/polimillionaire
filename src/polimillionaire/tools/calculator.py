@@ -139,6 +139,11 @@ def calc(expression: str) -> str:
 
     try:
         numeric = expr.evalf()
+    except AttributeError:
+        # Boolean compounds (And/Or/Not) and Sets returned by
+        # solve(inequality, var) — e.g. `(-oo < y) & (y < 8)` — don't have
+        # evalf. Show the symbolic form so the model still gets the bound.
+        return _cap(str(expr))
     except Exception as e:  # noqa: BLE001 -- sandbox boundary, must never raise
         return f"ERROR: {type(e).__name__}: {e}"
 

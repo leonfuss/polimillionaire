@@ -3,6 +3,38 @@
 What we tried, what we learned, why we changed it. Newest first.
 Pairs with git history but reads like notes — the *why*, not the diff.
 
+## 2026-05-13 — Inequality solve + duplicate-call short-circuit + var-naming rule
+
+Three more live-failure patterns this session, all addressable together.
+
+**Inequalities now work through the calc.** The strictly-convex L1 question
+gave the model the right inequality (`(f(1)-5)/3 < (9-f(1))/1`) but it
+arithmetic'd wrong and concluded `f(1) < 7` instead of `< 8`. Sympy CAN
+solve the inequality (returns an `And` object `(-oo < y) & (y < 8)`), but
+our calc tool was calling `.evalf()` on Boolean compounds — which they
+don't have — and surfacing the AttributeError. Fix: catch AttributeError
+in the evalf step and fall back to `str(expr)`. The model now sees the
+real bound and can match against options. Verified for `<`, `<=`, and
+no-solution (`y**2 + 1 < 0` → `False`).
+
+**Duplicate-call short-circuit in `run_react_loop`.** Two separate live
+runs showed the model emitting *byte-identical* calc actions in
+consecutive steps after seeing an ERROR result: 4 identical
+`solve(30*t - 360*(t//1) - 110, t)` calls, 4 identical
+`expand(...) % 8` calls, etc. Each duplicate burned ~5–10s. Loop now
+tracks the last expression; if the next action matches it exactly, skip
+remaining steps and force the answer. Generic — helps any retry-stuck
+model. New test in `tests/test_calc_react.py`.
+
+**Variable-naming rule for `f(1)` / `g(x)` unknowns.** When the question
+asks for an unknown spelled as a function call (`f(1)`, `g(x)`), the
+model often passes `solve(eq, f(1))`. Sympy parses `f(1)` as a function
+application with two symbols and rejects the solve. Both prompts now
+spell out: substitute a single-letter placeholder (`y`, `k`, `t`)
+before solving. Both also gain the explicit "do NOT retry the exact
+same expression" pitfall, and both note that `solve` works for
+inequalities too.
+
 ## 2026-05-13 — math-tir prompt: model-agnostic identity + stats exemplar fix
 
 Two cleanup-quality fixes after a notebook audit:

@@ -141,6 +141,7 @@ def run_react_loop(
     if start is None:
         start = time.perf_counter()
     json_kwargs: dict[str, Any] = {"max_tokens": max_tokens} if max_tokens is not None else {}
+    last_expression: str | None = None
 
     for _ in range(max_steps):
         try:
@@ -168,11 +169,20 @@ def run_react_loop(
                 prompt_version=prompt_version,
             )
         expression = out["expression"]
+        if expression == last_expression:
+            # Model emitted the exact same calc expression in two consecutive
+            # steps -- it's ignoring the prior result (usually an ERROR) and
+            # will burn the remaining budget on it. Short-circuit to the
+            # forced-answer step rather than letting the loop run dry.
+            if verbose:
+                print(f"   [{log_prefix}] duplicate calc expression — forcing answer")
+            break
         result = calc(expression)
         if verbose:
             print(f'   [{log_prefix}] calc("{expression}") -> {result}')
         messages.append({"role": "assistant", "content": json.dumps(out)})
         messages.append({"role": "user", "content": f"Calculator: `{expression}` = {result}"})
+        last_expression = expression
 
     # step cap hit or parse failure — force a commit on the answer-only schema
     messages.append(
