@@ -103,7 +103,10 @@ def test_strategy_uses_calculator_then_answers() -> None:
             },
         ]
     )
-    strategy = CalcReactStrategy(cast(LLM, fake))
+    # max_steps=2 pinned: this test exercises one calc + one answer; the
+    # production default (max_steps=1) is tested separately by the step-cap
+    # test below.
+    strategy = CalcReactStrategy(cast(LLM, fake), max_steps=2)
     decision = strategy(_make_question(), Context(competition_id=0, level=2))
 
     assert len(fake.calls) == 2
@@ -130,7 +133,10 @@ def test_strategy_recovers_from_calculator_error() -> None:
             },
         ]
     )
-    strategy = CalcReactStrategy(cast(LLM, fake))
+    # max_steps=3 pinned: this test exercises the retry-after-calc-error
+    # path, which needs at least two calc steps + one answer. The production
+    # default (max_steps=1) is tested separately by the step-cap test below.
+    strategy = CalcReactStrategy(cast(LLM, fake), max_steps=3)
     decision = strategy(_make_question(), Context(competition_id=0, level=2))
 
     assert len(fake.calls) == 3

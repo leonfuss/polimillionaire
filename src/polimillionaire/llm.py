@@ -124,7 +124,7 @@ class LLM:
         messages: list[Message],
         *,
         temperature: float = 0.2,
-        max_tokens: int = 512,
+        max_tokens: int = 256,
         **kwargs: Any,
     ) -> str:
         out = self._inner.create_chat_completion(
@@ -141,7 +141,7 @@ class LLM:
         schema: dict[str, Any],
         *,
         temperature: float = 0.2,
-        max_tokens: int = 512,
+        max_tokens: int = 256,
         **kwargs: Any,
     ) -> dict[str, Any]:
         from llama_cpp import LlamaGrammar

@@ -103,6 +103,38 @@ def _resolve_project_root(override: Path | None) -> Path:
     return Path(override) if override is not None else _PROJECT_ROOT
 
 
+def preload(
+    competition_ids: list[int] | None = None,
+    *,
+    project_root: Path | None = None,
+) -> None:
+    """Eagerly load embedders, reranker, and retrievers for `competition_ids`.
+
+    Without preload, the first question of each competition pays the HF
+    download + model-load tax (~3-10s for bge weights, plus FAISS mmap
+    warmup), which on a 30s timer turns the first question into a timeout.
+    Call this once after `make_strategy(...)` and before the game loop.
+
+    `competition_ids=None` warms everything (0..3). On a single-comp run,
+    pass `[competition_id]` to avoid loading wiki indexes you won't use.
+    """
+    cids = competition_ids if competition_ids is not None else [0, 1, 2, 3]
+    root = _resolve_project_root(project_root)
+
+    for cid in cids:
+        if cid in (0, 1, 2):
+            components = _wiki_components(root, cid)
+            if components is None:
+                continue
+            retriever, _bm25, reranker = components
+            retriever.embedder.preload()
+            reranker.preload()
+        elif cid == 3:
+            retriever = _math_retriever(root)
+            if retriever is not None:
+                retriever.embedder.preload()
+
+
 def _get_embedder(model_name: str) -> Any:
     from polimillionaire.retrieval.embedder import Embedder
 
@@ -247,6 +279,17 @@ def _build_wiki_rag(
     return WikiRagStrategy(llm, retriever, bm25, reranker, **_accepts(WikiRagStrategy, **kw))
 
 
+# Per-competition wiki_rag tuning. Entertainment's 794k-passage corpus is ~4x
+# the size of history and ~2x science -- the relevant doc is more likely to be
+# outside the default nprobe=32 / top-50 candidate window, so widen for it.
+# Override on a per-call basis by passing kwargs to make_strategy("auto", ...).
+_AUTO_WIKI_DEFAULTS: dict[int, dict[str, Any]] = {
+    0: {"nprobe": 128, "dense_k": 100, "sparse_k": 100, "fused_k": 50, "top_k": 8},
+    1: {},  # history -- defaults work well, ~83% in replay
+    2: {},  # science -- defaults work well, ~91% in replay
+}
+
+
 @register("auto")
 def _build_auto(
     llm: LLM,
@@ -261,6 +304,10 @@ def _build_auto(
     others use ZeroShotStrategy as a placeholder. This avoids loading three
     wiki indexes for a live game that only plays one competition. When
     `competition_id` is None (replay path), all four routes are built.
+
+    Per-competition defaults from `_AUTO_WIKI_DEFAULTS` are merged with the
+    caller's kwargs (caller wins on conflict) so the entertainment route gets
+    wider retrieval automatically without polluting other competitions.
     """
     from polimillionaire.strategies.routed import RoutedStrategy
     from polimillionaire.strategies.zero_shot import ZeroShotStrategy
@@ -268,12 +315,15 @@ def _build_auto(
     root = _resolve_project_root(project_root)
     placeholder = ZeroShotStrategy(llm)
 
+    def _wiki_kw(cid: int) -> dict[str, Any]:
+        return {**_AUTO_WIKI_DEFAULTS.get(cid, {}), **kw}
+
     if competition_id is not None:
         # single-competition live play: only build the one route we need
         routes: dict[int, Strategy] = {}
         if competition_id in (0, 1, 2):
             routes[competition_id] = _build_wiki_rag(
-                llm, competition_id=competition_id, project_root=root, **kw
+                llm, competition_id=competition_id, project_root=root, **_wiki_kw(competition_id)
             )
         elif competition_id == 3:
             routes[3] = _build_rag_calc_react(llm, project_root=root, **kw)
@@ -283,6 +333,6 @@ def _build_auto(
     # replay path: build all four routes
     routes = {}
     for cid in (0, 1, 2):
-        routes[cid] = _build_wiki_rag(llm, competition_id=cid, project_root=root, **kw)
+        routes[cid] = _build_wiki_rag(llm, competition_id=cid, project_root=root, **_wiki_kw(cid))
     routes[3] = _build_rag_calc_react(llm, project_root=root, **kw)
     return RoutedStrategy(routes=routes, default=placeholder)

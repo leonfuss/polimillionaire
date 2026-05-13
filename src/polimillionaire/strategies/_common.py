@@ -55,7 +55,10 @@ def make_schema(question: Question, *, include_rationale: bool = True) -> dict[s
     properties: dict[str, Any] = {}
     required: list[str] = []
     if include_rationale:
-        properties["rationale"] = {"type": "string"}
+        # maxLength bounds chain-of-thought at ~125 tokens — keeps total
+        # generation under 5s on T4 Q4 and prevents the 30s timeouts we saw
+        # when the model rambled on overly long rationales.
+        properties["rationale"] = {"type": "string", "maxLength": 500}
         required.append("rationale")
     properties["confidence"] = {"type": "number", "minimum": 0, "maximum": 1}
     properties["answer_id"] = {"type": "integer", "enum": option_ids}
@@ -92,7 +95,8 @@ def make_action_schema(question: Question) -> dict[str, Any]:
                 "type": "object",
                 "properties": {
                     "action": {"type": "string", "const": "answer"},
-                    "rationale": {"type": "string"},
+                    # Mirror make_schema: cap at ~125 tokens of reasoning.
+                    "rationale": {"type": "string", "maxLength": 500},
                     "confidence": {"type": "number", "minimum": 0, "maximum": 1},
                     "answer_id": {"type": "integer", "enum": option_ids},
                 },

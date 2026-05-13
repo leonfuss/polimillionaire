@@ -28,7 +28,7 @@ class CalcReactStrategy:
         self,
         llm: LLM,
         *,
-        max_steps: int = 3,
+        max_steps: int = 1,
         verbose: bool = False,
         prompt_version: str = prompt.LATEST,
     ) -> None:

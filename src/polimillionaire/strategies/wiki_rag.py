@@ -44,6 +44,7 @@ class WikiRagStrategy:
         sparse_k: int = 50,
         fused_k: int = 25,
         top_k: int = 5,
+        nprobe: int | None = None,
         use_dense: bool = True,
         use_sparse: bool = True,
         use_reranker: bool = True,
@@ -53,6 +54,8 @@ class WikiRagStrategy:
     ) -> None:
         if not (use_dense or use_sparse):
             raise ValueError("at least one of use_dense, use_sparse must be True")
+        if nprobe is not None:
+            retriever.set_nprobe(nprobe)
         # When the caller doesn't override the prompt, pick a variant whose
         # system message matches the schema: no rationale -> noreason prompt.
         if prompt_version is None:

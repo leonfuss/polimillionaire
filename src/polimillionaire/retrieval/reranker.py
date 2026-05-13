@@ -26,6 +26,11 @@ class Reranker:
         self.device = device or select_device()
         self._model: CrossEncoder | None = None
 
+    def preload(self) -> None:
+        """Eagerly load the underlying model so the first rerank() doesn't pay
+        the HF download + load cost. Idempotent."""
+        self._ensure_loaded()
+
     def _ensure_loaded(self) -> None:
         if self._model is None:
             from sentence_transformers import CrossEncoder

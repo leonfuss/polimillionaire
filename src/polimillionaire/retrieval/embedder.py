@@ -42,6 +42,11 @@ class Embedder:
         self.device = device or select_device()
         self._model: SentenceTransformer | None = None
 
+    def preload(self) -> None:
+        """Eagerly load the underlying model so the first encode() doesn't pay
+        the HF download + load cost. Idempotent."""
+        self._ensure_loaded()
+
     def _ensure_loaded(self) -> None:
         if self._model is None:
             from sentence_transformers import SentenceTransformer
