@@ -47,6 +47,7 @@ class RagCalcReactStrategy:
         max_steps: int = 1,
         verbose: bool = False,
         prompt_version: str = prompt.LATEST,
+        max_tokens: int | None = None,
     ) -> None:
         if max_steps < 1:
             raise ValueError(f"max_steps must be >= 1, got {max_steps}")
@@ -63,6 +64,7 @@ class RagCalcReactStrategy:
         self._max_steps = max_steps
         self._verbose = verbose
         self._variant = prompt.PROMPTS[prompt_version]
+        self._max_tokens = max_tokens
 
     @property
     def model_name(self) -> str:
@@ -101,4 +103,5 @@ class RagCalcReactStrategy:
             start=start,
             verbose=self._verbose,
             log_prefix="rag-calc-react",
+            max_tokens=self._max_tokens,
         )

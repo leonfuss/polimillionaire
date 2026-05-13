@@ -216,6 +216,18 @@ def _build_zero_shot(
     return ZeroShotStrategy(llm, **_accepts(ZeroShotStrategy, **kw))
 
 
+# Token budget bump for the math specialist: Qwen2.5-Math fights the JSON
+# grammar with verbose CoT and truncates mid-object at the global 256 default.
+# 768 has empirically been enough room for the action schema's `oneOf` branch.
+_MATH_TIR_MAX_TOKENS = 768
+
+
+def _apply_math_tir_defaults(kw: dict[str, Any]) -> dict[str, Any]:
+    if kw.get("prompt_version") == "math-tir" and "max_tokens" not in kw:
+        return {**kw, "max_tokens": _MATH_TIR_MAX_TOKENS}
+    return kw
+
+
 @register("calc_react")
 def _build_calc_react(
     llm: LLM,
@@ -226,6 +238,7 @@ def _build_calc_react(
 ) -> Strategy:
     from polimillionaire.strategies.calc_react import CalcReactStrategy
 
+    kw = _apply_math_tir_defaults(kw)
     return CalcReactStrategy(llm, **_accepts(CalcReactStrategy, **kw))
 
 
@@ -241,6 +254,7 @@ def _build_rag_calc_react(
     from polimillionaire.strategies.calc_react import CalcReactStrategy
     from polimillionaire.strategies.rag_calc_react import RagCalcReactStrategy
 
+    kw = _apply_math_tir_defaults(kw)
     retriever = _math_retriever(_resolve_project_root(project_root))
     if retriever is None:
         if strict:

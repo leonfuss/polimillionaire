@@ -31,6 +31,7 @@ class CalcReactStrategy:
         max_steps: int = 1,
         verbose: bool = False,
         prompt_version: str = prompt.LATEST,
+        max_tokens: int | None = None,
     ) -> None:
         if max_steps < 1:
             raise ValueError(f"max_steps must be >= 1, got {max_steps}")
@@ -43,6 +44,7 @@ class CalcReactStrategy:
         self._max_steps = max_steps
         self._verbose = verbose
         self._variant = prompt.PROMPTS[prompt_version]
+        self._max_tokens = max_tokens
 
     @property
     def model_name(self) -> str:
@@ -64,4 +66,5 @@ class CalcReactStrategy:
             prompt_version=self.prompt_version,
             verbose=self._verbose,
             log_prefix="calc-react",
+            max_tokens=self._max_tokens,
         )

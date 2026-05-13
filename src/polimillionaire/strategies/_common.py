@@ -123,6 +123,7 @@ def run_react_loop(
     start: float | None = None,
     verbose: bool = False,
     log_prefix: str = "react",
+    max_tokens: int | None = None,
 ) -> AnswerDecision:
     """Bounded calculate-or-answer ReAct loop. Forces an answer on step cap or
     parse failure; defaults to option 0 at confidence 0 if even that fails.
@@ -130,20 +131,33 @@ def run_react_loop(
     Pass `start` from before any retrieval the caller did so the returned
     AnswerDecision.latency_ms reflects total wall-clock; defaults to "now"
     for callers (like CalcReactStrategy) that have no retrieval prefix.
+
+    `max_tokens=None` uses `complete_json`'s default (256). Math-specialist
+    routes pass a larger budget here because Qwen2.5-Math fights the JSON
+    grammar with verbose CoT and frequently truncates at 256.
     """
     messages: list[Message] = list(initial_messages)
     action_schema = make_action_schema(question)
     if start is None:
         start = time.perf_counter()
+    json_kwargs: dict[str, Any] = {"max_tokens": max_tokens} if max_tokens is not None else {}
 
     for _ in range(max_steps):
         try:
-            out = llm.complete_json(messages, action_schema)
-        except ValueError:
+            out = llm.complete_json(messages, action_schema, **json_kwargs)
+        except ValueError as exc:
             # output blew through max_tokens and didn't parse as JSON;
             # skip remaining steps and force an answer with whatever context we have
             if verbose:
+                # surface the raw output (truncated) so we can diagnose whether
+                # the model is emitting non-JSON, hitting the token cap, or
+                # generating malformed JSON. complete_json's ValueError message
+                # embeds the raw output verbatim.
+                detail = str(exc)
+                if len(detail) > 300:
+                    detail = detail[:300] + "..."
                 print(f"   [{log_prefix}] action step failed to parse — forcing answer")
+                print(f"   [{log_prefix}] raw: {detail}")
             break
         if out["action"] == "answer":
             return build_decision(
@@ -165,12 +179,16 @@ def run_react_loop(
         {"role": "user", "content": "Step limit reached. Answer now using the answer schema."}
     )
     try:
-        out = llm.complete_json(messages, make_schema(question))
-    except ValueError:
+        out = llm.complete_json(messages, make_schema(question), **json_kwargs)
+    except ValueError as exc:
         # even the forced answer didn't parse; default to the first option at zero
         # confidence so the game submits something and continues
         if verbose:
+            detail = str(exc)
+            if len(detail) > 300:
+                detail = detail[:300] + "..."
             print(f"   [{log_prefix}] forced answer also failed — defaulting to option 0")
+            print(f"   [{log_prefix}] raw: {detail}")
         return build_decision(
             {
                 "rationale": "Model output failed to parse; defaulting to first option.",

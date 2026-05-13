@@ -3,6 +3,33 @@
 What we tried, what we learned, why we changed it. Newest first.
 Pairs with git history but reads like notes — the *why*, not the diff.
 
+## 2026-05-13 — Math route: bigger token budget + parse-failure logging
+
+First live run with `qwen2.5-math-7b` + `math-tir` lost all 3 games at
+level 1 with `action step failed to parse` on every question. Diagnosis:
+Qwen2.5-Math was trained on Tool-Integrated Reasoning (verbose CoT +
+Python code blocks), not JSON. Under our grammar constraint it burns
+through the 256-token default trying to comply with the more complex
+`oneOf` action schema, truncating mid-object and failing to parse.
+Confirming evidence: in one game the *forced-answer* fallback (using the
+simpler flat schema, no `oneOf`) succeeded at the same token budget.
+
+Two changes:
+
+- **`run_react_loop` now accepts `max_tokens`** (default `None` = use
+  `complete_json`'s 256). `CalcReactStrategy` and `RagCalcReactStrategy`
+  thread it through. The factory's calc-react builders auto-set
+  `max_tokens=768` when `prompt_version="math-tir"` so math-route users
+  don't need to remember the override.
+- **Raw model output is now logged on parse failure** (truncated to
+  300 chars). Previously we silently swallowed the `ValueError` whose
+  message contained exactly the diagnostic data we needed — flying blind
+  ate one debugging cycle. Now both the action-step parse failure and the
+  forced-answer parse failure print `[<prefix>] raw: <truncated>`.
+
+Non-math routes are unaffected: with `max_tokens=None`, the global
+default of 256 still applies.
+
 ## 2026-05-13 — Math specialist: Qwen2.5-Math-7B + math-tir prompt
 
 Registered `qwen2.5-math-7b` in MODELS (bartowski's
