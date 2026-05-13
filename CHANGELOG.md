@@ -3,6 +3,41 @@
 What we tried, what we learned, why we changed it. Newest first.
 Pairs with git history but reads like notes — the *why*, not the diff.
 
+## 2026-05-13 — Math-wiki augmentation for the math RAG corpus
+
+Multiple live runs failed on topics the Hendrycks MATH dataset just doesn't
+cover: Sylow theorems, S_5 cycle structure, Z_n[x] polynomial rings, real
+statistics. The MATH corpus is mostly Algebra / Counting & Probability /
+Geometry / Number Theory / Prealgebra / Precalculus — no abstract algebra,
+no statistical inference. Retrieval was finding "similar" problems but they
+were never the right reference for a group/ring/stats question.
+
+**Same index, augmented corpus.** Rather than spin up a second retriever and
+double the per-question latency, the math index now mixes two sources in one
+`passages.jsonl`:
+
+- `source=math_problems`: the existing 12.5k MATH problems (unchanged).
+- `source=math_wiki`: Wikipedia chunks from a curated category list
+  (`MATH_WIKI_CATEGORIES` in `wiki_seeds.py`): Abstract algebra, Group
+  theory, Ring theory, Field (mathematics), Galois theory, Linear algebra,
+  Statistics, Probability theory, Statistical hypothesis testing,
+  Combinatorics, Number theory, Topology. depth=2 BFS like the other wikis.
+
+**Prompt formatter branches on source.** A retrieved problem renders as the
+existing `Problem: ... / Solution: ...` pair; a wiki chunk renders as a
+`Reference N (Wikipedia: <title>, similarity=X)` excerpt with the body text
+directly. Forcing wiki content into the Problem/Solution shape would invite
+the model to "solve" an encyclopedia entry and copy a non-existent answer.
+
+**Backwards-compatible.** Pre-augmentation indexes (no `source` field) keep
+rendering as problem-solutions exactly as before. The builder has
+`--no-wiki` / `--wiki-only` flags so an existing problem-only index can be
+extended without re-embedding the 12.5k problems, and the wiki crawl/dump
+artifacts are cached so an interrupted build resumes.
+
+Index not rebuilt locally yet — too expensive on this laptop; user will
+run on Colab/Kaggle.
+
 ## 2026-05-13 — Inequality solve + duplicate-call short-circuit + var-naming rule
 
 Three more live-failure patterns this session, all addressable together.

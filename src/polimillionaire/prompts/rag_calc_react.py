@@ -34,9 +34,23 @@ if TYPE_CHECKING:
 # chars but tail out past 1500 on the hardest problems; left uncapped
 # they bloat the prompt past the model's useful attention span.
 _MAX_SOLUTION_CHARS = 600
+# Same cap on raw wiki chunks: the chunker targets ~256 tokens (~1500
+# chars) which is already in-budget, but a long table-of-contents-style
+# article can exceed that.
+_MAX_WIKI_CHARS = 1200
 
 
 def _format_reference(p: Passage, idx: int) -> str:
+    # Wiki passages tagged by build_math_index.py carry `source=math_wiki`
+    # and have no `solution`. Render them as encyclopedia entries so the
+    # "Problem:/Solution:" framing doesn't make them look like solved
+    # problems the model can copy from.
+    if p.metadata.get("source") == "math_wiki":
+        title = p.metadata.get("title", "Wikipedia")
+        text = p.text
+        if len(text) > _MAX_WIKI_CHARS:
+            text = text[:_MAX_WIKI_CHARS] + " [...]"
+        return f"Reference {idx} (Wikipedia: {title}, similarity={p.score:.2f}):\n" f"{text}"
     subject = p.metadata.get("subject", "math")
     solution = p.metadata.get("solution", "")
     if len(solution) > _MAX_SOLUTION_CHARS:
@@ -53,11 +67,12 @@ def _format_reference_block(passages: list[Passage]) -> str:
         return ""
     body = "\n\n".join(_format_reference(p, i + 1) for i, p in enumerate(passages))
     return (
-        "Below are similar problems and their step-by-step solutions, "
-        "retrieved from a problem bank for reference. Use them to "
-        "recognise the pattern, then solve the actual question with the "
-        "calculator -- do not copy a reference's answer if the actual "
-        "question's numbers differ.\n"
+        "Below are similar problems (with step-by-step solutions) and "
+        "Wikipedia excerpts on relevant math topics, retrieved for "
+        "reference. Use them to recognise the pattern or recall a "
+        "definition, then solve the actual question with the calculator "
+        "-- do not copy a reference's answer if the actual question's "
+        "numbers differ.\n"
         "\n"
         f"{body}"
     )

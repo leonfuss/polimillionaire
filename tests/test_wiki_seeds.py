@@ -29,3 +29,14 @@ def test_no_duplicate_categories_within_seed() -> None:
 def test_competition_ids_match_dict_keys() -> None:
     for key, seed in SEEDS.items():
         assert seed.competition_id == key
+
+
+def test_math_wiki_categories_are_distinct_and_nonempty() -> None:
+    from polimillionaire.retrieval.wiki_seeds import MATH_WIKI_CATEGORIES
+
+    assert len(MATH_WIKI_CATEGORIES) >= 8
+    assert len(set(MATH_WIKI_CATEGORIES)) == len(MATH_WIKI_CATEGORIES)
+    # Each must be a stripped non-empty string (Wikipedia API rejects
+    # leading/trailing whitespace in category names).
+    for c in MATH_WIKI_CATEGORIES:
+        assert c and c == c.strip()

@@ -77,3 +77,29 @@ SEEDS: dict[int, CompetitionSeed] = {
         ],
     ),
 }
+
+
+# Math Wikipedia categories used to AUGMENT the math problem corpus
+# (Hendrycks MATH dataset) with encyclopedic coverage of topics the dataset
+# barely touches: abstract algebra (groups, rings, fields, Galois theory),
+# real statistics (variance, hypothesis testing), linear algebra, topology.
+# These live alongside the math problems in data/index/math, retrieved by
+# the same Retriever -- the prompt formatter branches on metadata `source`
+# to render wiki chunks differently from problem-solution pairs.
+#
+# Not a CompetitionSeed because it isn't a separate competition route;
+# it's a sub-corpus of the math route (competition 3).
+MATH_WIKI_CATEGORIES: list[str] = [
+    "Abstract algebra",
+    "Group theory",
+    "Ring theory",
+    "Field theory",
+    "Galois theory",
+    "Linear algebra",
+    "Statistics",
+    "Probability theory",
+    "Statistical hypothesis testing",
+    "Combinatorics",
+    "Number theory",
+    "Topology",
+]
