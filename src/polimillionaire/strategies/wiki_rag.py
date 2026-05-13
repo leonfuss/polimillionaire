@@ -45,6 +45,7 @@ class WikiRagStrategy:
         fused_k: int = 25,
         top_k: int = 5,
         nprobe: int | None = None,
+        min_rerank_score: float = 0.15,
         use_dense: bool = True,
         use_sparse: bool = True,
         use_reranker: bool = True,
@@ -75,6 +76,7 @@ class WikiRagStrategy:
         self._use_dense = use_dense
         self._use_sparse = use_sparse
         self._use_reranker = use_reranker
+        self._min_rerank_score = min_rerank_score
         self._include_rationale = include_rationale
         self._verbose = verbose
         self._variant = prompt.PROMPTS[prompt_version]
@@ -116,11 +118,28 @@ class WikiRagStrategy:
                 )
             top_passages = []
 
+        # Conditional RAG: when the reranker's best score is below the floor,
+        # the retrieved passages are off-topic and tend to mislead the LLM
+        # rather than help it. Drop everything below the threshold and let
+        # the model fall back to its parametric knowledge -- the prompt
+        # renders the same way as the retrieval-failed path above.
+        if self._use_reranker and self._min_rerank_score > 0 and top_passages:
+            kept = [p for p in top_passages if p.score >= self._min_rerank_score]
+            if self._verbose and len(kept) != len(top_passages):
+                dropped = len(top_passages) - len(kept)
+                print(
+                    f"   [wiki_rag] dropped {dropped} passage(s) below "
+                    f"rerank floor {self._min_rerank_score:.2f}"
+                )
+            top_passages = kept
+
         if self._verbose and top_passages:
             print(
                 "   [wiki_rag] retrieved "
                 + ", ".join(f"{p.id} ({p.score:.2f})" for p in top_passages)
             )
+        elif self._verbose:
+            print("   [wiki_rag] no passages above threshold; answering from parametric knowledge")
 
         messages = self._variant.render(question, top_passages)
         schema = make_schema(question, include_rationale=self._include_rationale)

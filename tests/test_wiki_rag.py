@@ -56,14 +56,18 @@ class _FakeBM25:
 @dataclass
 class _FakeReranker:
     last_top_k: int | None = None
+    # Score assigned to every returned passage; mirrors production
+    # Reranker.rerank() which overwrites Passage.score with its logit.
+    # 1.0 is above WikiRagStrategy.min_rerank_score so tests still see the
+    # passages in the prompt unless they set the field explicitly.
+    score: float = 1.0
 
     def rerank(
         self, query: str, passages: list[Passage], *, top_k: int | None = None
     ) -> list[Passage]:  # noqa: ARG002
         self.last_top_k = top_k
-        if top_k is not None:
-            return passages[:top_k]
-        return passages
+        kept = passages[:top_k] if top_k is not None else passages
+        return [Passage(id=p.id, text=p.text, metadata=p.metadata, score=self.score) for p in kept]
 
 
 _PASSAGES = [
@@ -191,6 +195,44 @@ def test_empty_passage_list_when_no_hits() -> None:
     user_content = fake.calls[0][0][1]["content"]
     assert "Wikipedia excerpts" not in user_content
     assert "Q: What is the capital" in user_content
+
+
+def test_low_rerank_scores_are_dropped_from_prompt() -> None:
+    """When the reranker returns scores below min_rerank_score, the passages
+    must not appear in the prompt — the LLM should fall back to its
+    parametric knowledge instead of being misled by off-topic context.
+    """
+    fake = _FakeLLM({"rationale": "no context", "confidence": 0.4, "answer_id": 3})
+    # Score 0.05 < default min_rerank_score 0.15 → all passages filtered out.
+    low_score_reranker = _FakeReranker(score=0.05)
+    strategy = _make_strategy(fake, reranker=low_score_reranker)
+    strategy(_make_question(), _ctx())
+
+    user_content = fake.calls[0][0][1]["content"]
+    assert "Wikipedia excerpts" not in user_content
+    assert "Q: What is the capital" in user_content
+
+
+def test_high_rerank_scores_pass_the_floor() -> None:
+    """Passages above min_rerank_score are kept and appear in the prompt."""
+    fake = _FakeLLM({"rationale": "got it", "confidence": 0.9, "answer_id": 3})
+    high_score_reranker = _FakeReranker(score=0.8)
+    strategy = _make_strategy(fake, reranker=high_score_reranker, min_rerank_score=0.5)
+    strategy(_make_question(), _ctx())
+
+    user_content = fake.calls[0][0][1]["content"]
+    assert "Wikipedia excerpts" in user_content
+
+
+def test_min_rerank_score_zero_disables_the_floor() -> None:
+    """min_rerank_score=0 must keep every reranked passage even at tiny scores."""
+    fake = _FakeLLM({"rationale": "got it", "confidence": 0.9, "answer_id": 3})
+    low_score_reranker = _FakeReranker(score=0.001)
+    strategy = _make_strategy(fake, reranker=low_score_reranker, min_rerank_score=0.0)
+    strategy(_make_question(), _ctx())
+
+    user_content = fake.calls[0][0][1]["content"]
+    assert "Wikipedia excerpts" in user_content
 
 
 def test_reranker_receives_configured_top_k() -> None:

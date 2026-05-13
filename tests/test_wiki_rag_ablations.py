@@ -46,12 +46,16 @@ class _TrackingRetriever:
 @dataclass
 class _TrackingReranker:
     called: bool = False
+    # Mirrors production reranker: returned passages get a fresh score.
+    # 1.0 keeps tests above WikiRagStrategy.min_rerank_score's default.
+    score: float = 1.0
 
     def rerank(
         self, query: str, passages: list[Passage], *, top_k: int | None = None
     ) -> list[Passage]:  # noqa: ARG002
         self.called = True
-        return passages[:top_k] if top_k is not None else passages
+        kept = passages[:top_k] if top_k is not None else passages
+        return [Passage(id=p.id, text=p.text, metadata=p.metadata, score=self.score) for p in kept]
 
 
 _PASSAGES = [
