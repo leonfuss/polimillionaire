@@ -35,6 +35,14 @@ rag = [
     "numpy>=1.26",
     "bm25s>=0.3.8",
 ]
+# Optional. For the Kaggle-Dataset round-trip of the question log.
+# Pre-installed on Kaggle kernels; only need this group locally to run
+# the one-time `scripts/kaggle_db_init.py` seeding step.
+# Install with `uv sync --group kaggle`.
+kaggle = [
+    "kaggle>=1.6",
+    "numpy>=1.26"
+]
 
 [build-system]
 requires = ["hatchling"]
