@@ -3,6 +3,72 @@
 What we tried, what we learned, why we changed it. Newest first.
 Pairs with git history but reads like notes — the *why*, not the diff.
 
+## 2026-05-14 — Speech-mode support: ASR + mode-aware DB retrieval
+
+The staff dropped the audio interface promised in the brief. A live
+probe of `/api/game/{sid}/audio/question` confirmed the shape: WAV bytes,
+24 kHz mono 16-bit PCM, ~5 s per clip. Crucially, `current_question.text`
+and every `option.text` are **None** in speech mode -- the audio is the
+only signal, so a "pragmatic text fallback" ablation isn't available;
+ASR is mandatory. The server's 30 s clock starts on the *fourth*
+option-audio fetch, not on question delivery, which gives us free time
+for transcription before the clock starts.
+
+New layout:
+
+- `asr/whisper.py` — lazy `WhisperTranscriber` around
+  `openai/whisper-large-v3-turbo`. fp16 on `cuda:1` by default
+  (overridable via `POLIMILLIONAIRE_ASR_DEVICE`), English hard-pinned,
+  greedy decoding (`num_beams=1`). WAVs are decoded with the stdlib
+  `wave` module and resampled 24 kHz → 16 kHz via `scipy.signal.resample_poly`.
+  Output is whitespace-normalised so the same audio → same DB key.
+- `play.speech_auto_play_loop` — parallels `auto_play_loop`. Starts the
+  session with `mode="speech"`, then for each question fetches and
+  transcribes Q → opt0 → opt1 → opt2 → opt3 (the last fetch starts the
+  server clock; everything before is free time). Hands a synthetic
+  `Question` with ASR text to the strategy.
+
+Mode tagging in the DB:
+
+- `predictions.mode` column (`'text'` | `'speech'`), idempotent migration
+  for pre-existing DBs (the index lands in `_migrate()` after the ALTER
+  so a pre-existing DB doesn't choke creating the index before the
+  column exists). Speech-mode rows store the Whisper transcript as
+  `question_text`, which by construction will not byte-match a
+  text-mode row's server-provided text.
+- All `db_retrieval` lookups (`lookup_known_correct`,
+  `lookup_failed_options`, `find_text_mismatch`) are mode-scoped. By
+  default, speech and text rows live in disjoint buckets -- the drift
+  banner no longer fires just because an ASR transcript doesn't match
+  a server-provided text for the same `question_id`.
+
+Cross-mode cold-start helper:
+
+- `make_strategy(..., mode="speech", use_text_mode_retrieval=True)` adds
+  a text-mode fallback on speech-mode same-mode miss. Reads the cached
+  *option text* from the text-mode row and fuzzy-matches it against the
+  live (transcribed) option texts via normalise (lowercase, strip
+  punctuation, collapse whitespace) + `SequenceMatcher.ratio >= 0.88`.
+  Exact match short-circuits. Multiple options crossing the threshold →
+  abstain (ambiguous). Self-contradiction check still applies: if speech
+  has already proved that resolved option wrong, defer to the LLM.
+  Numeric answers ("1492" vs "fourteen ninety two") will miss the
+  threshold and defer to the LLM -- a deliberate acceptance.
+
+Independent timing fix:
+
+- `db_retrieval.llm_timeout_s` lowered from 30.0 → 25.0. The server's
+  deadline is 30 s; the previous default left zero headroom for the
+  answer POST to land, so RTT spikes from Colab were getting marked as
+  timeouts even when the LLM produced an answer. Five seconds is enough
+  to absorb the worst RTT + processing tails we've observed.
+
+14 new tests: 6 for the WAV decode / resample / normalise path
+(synthesised sine wave; no model load), 6 for mode-scoped lookups +
+cross-mode fuzzy resolution + ambiguity / self-contradiction handling,
+and 2 for the `_speech_question_builder` fetch-order contract (mock
+`GameSession` + mock transcriber).
+
 ## 2026-05-14 — DB retrieval: verify cached answer against current options
 
 First live use of the db_retrieval wrapper surfaced two failure modes

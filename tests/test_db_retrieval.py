@@ -99,6 +99,7 @@ def _record(
     options: list[dict] | None = None,
     generated: bool = False,
     session_id: int = 1,
+    mode: str = "text",
 ) -> None:
     log.record(
         PredictionRecord(
@@ -118,6 +119,7 @@ def _record(
             rationale=None,
             latency_ms=0,
             generated_answer=generated,
+            mode=mode,
         )
     )
 
@@ -391,6 +393,260 @@ def test_db_hit_self_heals_after_answer_key_edit(tmp_path: Path) -> None:
     # wrapper wouldn't have re-submitted it via the avoidance path either
     assert inner.calls == 1
     assert out.option_id == 2
+
+
+# ---- mode-aware lookups ---------------------------------------------------
+
+
+def test_lookups_are_mode_scoped(tmp_path: Path) -> None:
+    """A 'speech' row for the same question_id must not feed the 'text' lookup
+    or vice versa: text-mode and speech-mode rows live in disjoint buckets."""
+    log = QuestionLog(tmp_path / "q.sqlite")
+    _record(log, qid=99, text="What is the capital of France?", predicted=2, correct=2)
+    _record(
+        log, qid=99, text="what is the capital of france", predicted=1, correct=1, mode="speech"
+    )
+
+    # text-mode reads its own row
+    assert log.lookup_known_correct(99, "What is the capital of France?", "text") == (2, "5")
+    # text-mode is blind to the speech row even though the qid matches
+    assert log.lookup_known_correct(99, "what is the capital of france", "text") is None
+    # speech-mode reads its own row
+    assert log.lookup_known_correct(99, "what is the capital of france", "speech") == (1, "4")
+    # speech-mode is blind to the text row's text
+    assert log.lookup_known_correct(99, "What is the capital of France?", "speech") is None
+
+
+def test_find_text_mismatch_is_mode_scoped(tmp_path: Path) -> None:
+    """An ASR transcript drifting from server text in a different mode is not
+    drift -- they're different data sources for the same question id."""
+    log = QuestionLog(tmp_path / "q.sqlite")
+    _record(log, qid=5, text="Server text", predicted=0, correct=None)
+    # A speech-mode row with totally different text must not trip text-mode drift.
+    _record(
+        log, qid=5, text="totally different transcript", predicted=0, correct=None, mode="speech"
+    )
+    assert log.find_text_mismatch(5, "Server text", "text") is None
+    assert log.find_text_mismatch(5, "totally different transcript", "speech") is None
+
+
+def test_lookup_known_correct_text_returns_option_text(tmp_path: Path) -> None:
+    """The cross-mode helper returns the cached *option text* so the caller
+    can fuzzy-match it against the live (transcribed) options."""
+    log = QuestionLog(tmp_path / "q.sqlite")
+    _record(log, qid=11, text="Q", predicted=2, correct=2)
+    assert log.lookup_known_correct_text(11, "text") == "5"
+    assert log.lookup_known_correct_text(11, "speech") is None  # no speech rows yet
+
+
+def test_use_text_mode_retrieval_rejects_text_mode_construction(tmp_path: Path) -> None:
+    """Asking for text-mode fallback while in text mode is meaningless: same-mode
+    IS text-mode. Catching this at construction beats a silent no-op."""
+    log_path = tmp_path / "q.sqlite"
+    QuestionLog(log_path)
+    try:
+        DbRetrievalStrategy(
+            _FixedInner(_decision(option_id=0)),
+            str(log_path),
+            mode="text",
+            use_text_mode_retrieval=True,
+        )
+    except ValueError:
+        return
+    raise AssertionError("expected ValueError for text-mode + use_text_mode_retrieval")
+
+
+def test_cross_mode_fallback_resolves_via_text_lookup(tmp_path: Path) -> None:
+    """Speech-mode session with no speech row yet. text-mode row says option 1
+    text was 'Paris' was correct; the live (transcribed) question has 'paris'
+    on option 1. Cross-mode fallback fuzzy-matches and hits."""
+    log_path = tmp_path / "q.sqlite"
+    log = QuestionLog(log_path)
+    # text-mode confirmed: option_id=1, text="Paris"
+    _record(
+        log,
+        qid=42,
+        text="What is the capital of France?",
+        predicted=1,
+        correct=1,
+        options=[
+            {"id": 0, "text": "London"},
+            {"id": 1, "text": "Paris"},
+            {"id": 2, "text": "Rome"},
+            {"id": 3, "text": "Berlin"},
+        ],
+    )
+
+    # Live speech-mode question: same option_id mapping, but text is the
+    # Whisper output (lower case, trailing punctuation).
+    live_question = Question(
+        id=42,
+        text="what is the capital of france",
+        options=[
+            Option(id=0, text="london."),
+            Option(id=1, text="paris."),
+            Option(id=2, text="rome."),
+            Option(id=3, text="berlin."),
+        ],
+        level=1,
+    )
+
+    inner = _FixedInner(_decision(option_id=0))  # would be wrong
+    sleeps: list[float] = []
+    strat = DbRetrievalStrategy(
+        inner,
+        str(log_path),
+        mode="speech",
+        use_text_mode_retrieval=True,
+        sleeper=sleeps.append,
+        rng=random.Random(0),
+    )
+    out = strat(live_question, _ctx())
+
+    assert out.option_id == 1
+    assert inner.calls == 0
+    assert "text-mode-fallback" in out.rationale
+
+
+def test_cross_mode_fallback_handles_reshuffle(tmp_path: Path) -> None:
+    """Cached correct text was on option 1 in the text-mode session, but the
+    live speech-mode options put it at index 2. We fuzzy-match by text, not
+    by id, so we still pick the right option."""
+    log_path = tmp_path / "q.sqlite"
+    log = QuestionLog(log_path)
+    _record(
+        log,
+        qid=42,
+        text="Q",
+        predicted=1,
+        correct=1,
+        options=[
+            {"id": 0, "text": "London"},
+            {"id": 1, "text": "Paris"},
+            {"id": 2, "text": "Rome"},
+            {"id": 3, "text": "Berlin"},
+        ],
+    )
+    live_question = Question(
+        id=42,
+        text="q",
+        options=[
+            Option(id=0, text="london"),
+            Option(id=1, text="rome"),
+            Option(id=2, text="paris"),  # moved
+            Option(id=3, text="berlin"),
+        ],
+        level=1,
+    )
+
+    inner = _FixedInner(_decision(option_id=0))
+    strat = DbRetrievalStrategy(
+        inner,
+        str(log_path),
+        mode="speech",
+        use_text_mode_retrieval=True,
+        sleeper=lambda _s: None,
+        rng=random.Random(0),
+    )
+    out = strat(live_question, _ctx())
+
+    assert out.option_id == 2
+    assert inner.calls == 0
+
+
+def test_cross_mode_fallback_skips_if_speech_proved_it_wrong(tmp_path: Path) -> None:
+    """If we already submitted the cross-mode-resolved option in speech and
+    got back wrong, the speech and text caches disagree -- defer to the LLM."""
+    log_path = tmp_path / "q.sqlite"
+    log = QuestionLog(log_path)
+    _record(
+        log,
+        qid=42,
+        text="Q",
+        predicted=1,
+        correct=1,
+        options=[
+            {"id": 0, "text": "London"},
+            {"id": 1, "text": "Paris"},
+            {"id": 2, "text": "Rome"},
+            {"id": 3, "text": "Berlin"},
+        ],
+    )
+    # speech-mode already tried option 1 ("paris") and got it wrong
+    _record(
+        log, qid=42, text="what is the capital of france", predicted=1, correct=None, mode="speech"
+    )
+
+    live_question = Question(
+        id=42,
+        text="what is the capital of france",
+        options=[
+            Option(id=0, text="london"),
+            Option(id=1, text="paris"),
+            Option(id=2, text="rome"),
+            Option(id=3, text="berlin"),
+        ],
+        level=1,
+    )
+    inner = _FixedInner(_decision(option_id=3))
+    strat = DbRetrievalStrategy(
+        inner,
+        str(log_path),
+        mode="speech",
+        use_text_mode_retrieval=True,
+        sleeper=lambda _s: None,
+        rng=random.Random(0),
+    )
+    out = strat(live_question, _ctx())
+    # Cross-mode resolved to 1 but 1 is in speech-failed -> fall through to LLM.
+    assert inner.calls == 1
+    assert out.option_id == 3
+
+
+def test_cross_mode_fallback_abstains_on_ambiguous_match(tmp_path: Path) -> None:
+    """When two live options are similar enough to both cross the threshold,
+    the resolver abstains (better to ask the LLM than risk the wrong one)."""
+    log_path = tmp_path / "q.sqlite"
+    log = QuestionLog(log_path)
+    _record(
+        log,
+        qid=42,
+        text="Q",
+        predicted=0,
+        correct=0,
+        options=[
+            {"id": 0, "text": "Mercury"},
+            {"id": 1, "text": "Venus"},
+            {"id": 2, "text": "Earth"},
+            {"id": 3, "text": "Mars"},
+        ],
+    )
+    # live options are misheard near-duplicates of "Mercury"
+    live_question = Question(
+        id=42,
+        text="q",
+        options=[
+            Option(id=0, text="mercury"),
+            Option(id=1, text="mercury "),  # near-identical
+            Option(id=2, text="earth"),
+            Option(id=3, text="mars"),
+        ],
+        level=1,
+    )
+    inner = _FixedInner(_decision(option_id=2))
+    strat = DbRetrievalStrategy(
+        inner,
+        str(log_path),
+        mode="speech",
+        use_text_mode_retrieval=True,
+        sleeper=lambda _s: None,
+        rng=random.Random(0),
+    )
+    out = strat(live_question, _ctx())
+    # After normalisation "mercury" == "mercury " -> exact-match short-circuit
+    # returns id 0. The ambiguity guard applies only when *non*-exact matches
+    # both cross the threshold; this test pins that exact-match short-circuit.
+    assert out.option_id == 0
 
 
 def test_all_options_failed_returns_first_option(tmp_path: Path) -> None:

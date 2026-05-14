@@ -90,6 +90,8 @@ def make_strategy(
     project_root: Path | None = None,
     db_retrieval: bool = False,
     db_path: str | None = None,
+    mode: str = "text",
+    use_text_mode_retrieval: bool = False,
     **kwargs: Any,
 ) -> Strategy:
     """Construct a strategy by name.
@@ -101,7 +103,14 @@ def make_strategy(
     `db_retrieval=True` wraps the built strategy with `DbRetrievalStrategy`:
     look up the question in `data/questions.sqlite` first, return the
     server-confirmed answer (after a 7-18s pacing delay) when found, and
-    otherwise fall through to the underlying strategy under a 30s budget.
+    otherwise fall through to the underlying strategy under a ~25s budget.
+
+    `mode` is "text" or "speech"; it gates which DB rows the wrapper reads.
+    `use_text_mode_retrieval=True` (speech only) adds a cross-mode fallback:
+    on a same-mode miss, check the text-mode row for this question_id and
+    fuzzy-match the cached correct option text against the (transcribed)
+    current options. Useful as a cold-start helper before speech-mode rows
+    exist for a question.
 
     Extra `kwargs` are forwarded to the strategy's constructor (e.g.
     `verbose=True`, `max_steps=5`).
@@ -116,6 +125,8 @@ def make_strategy(
     return DbRetrievalStrategy(
         inner,
         _resolve_db_path(db_path, project_root),
+        mode=mode,
+        use_text_mode_retrieval=use_text_mode_retrieval,
         verbose=kwargs.get("verbose", False),
     )
 

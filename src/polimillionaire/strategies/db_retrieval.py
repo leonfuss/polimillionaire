@@ -24,6 +24,7 @@ import concurrent.futures as _futures
 import random
 import time
 from collections.abc import Callable
+from difflib import SequenceMatcher
 from typing import TYPE_CHECKING
 
 from polimillionaire.recording import QuestionLog
@@ -34,6 +35,62 @@ if TYPE_CHECKING:
     from polimillionaire.strategies.base import Strategy
 
 _META_INDEX_VALID = "index_valid"
+
+# Cross-mode fuzzy-match threshold (SequenceMatcher.ratio). 0.88 admits
+# normal punctuation/whitespace/casing drift between server-provided text
+# and Whisper output (e.g. "Paris." vs "paris" -> 1.0 after normalisation,
+# "1492" vs "fourteen ninety two" -> ~0.0 so we abstain). Tightening reduces
+# false hits on numeric questions; loosening risks picking the wrong option
+# when two options are similar strings ("Mars"/"Mercury").
+_FUZZY_THRESHOLD = 0.88
+
+
+def _fuzzy_normalize(s: str) -> str:
+    """Lowercase, drop punctuation, collapse whitespace.
+
+    Aggressive on purpose: the cross-mode comparison spans server-provided
+    text and Whisper output, which differ in casing, trailing punctuation,
+    and stray spaces but should agree on actual content words.
+    """
+    s = s.lower()
+    cleaned = []
+    for c in s:
+        if c.isalnum() or c.isspace():
+            cleaned.append(c)
+        else:
+            cleaned.append(" ")
+    return " ".join("".join(cleaned).split())
+
+
+def _fuzzy_resolve_option(question: Question, cached_text: str) -> int | None:
+    """Find the single option whose text fuzzy-matches `cached_text`.
+
+    Returns the matching option_id, or None if no option crosses the
+    threshold OR if two or more options do (ambiguous match -> abstain).
+    Exact match after normalisation short-circuits and wins even when a
+    second option also crosses the threshold; that's the unambiguous case.
+    """
+    norm_cached = _fuzzy_normalize(cached_text)
+    scored: list[tuple[float, int]] = []
+    for o in question.options:
+        if o.text is None:
+            continue
+        norm_opt = _fuzzy_normalize(o.text)
+        if norm_opt and norm_opt == norm_cached:
+            return o.id
+        ratio = SequenceMatcher(None, norm_opt, norm_cached).ratio()
+        scored.append((ratio, o.id))
+    if not scored:
+        return None
+    scored.sort(key=lambda x: x[0], reverse=True)
+    if scored[0][0] < _FUZZY_THRESHOLD:
+        return None
+    # Ambiguous: two or more options crossed the threshold.
+    if len(scored) > 1 and scored[1][0] >= _FUZZY_THRESHOLD:
+        return None
+    return scored[0][1]
+
+
 _DRIFT_BANNER = (
     "\n"
     "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n"
@@ -60,17 +117,31 @@ class DbRetrievalStrategy:
         inner: Strategy,
         db_path: str,
         *,
+        mode: str = "text",
+        use_text_mode_retrieval: bool = False,
         sleep_min: float = 7.0,
         sleep_max: float = 18.0,
-        llm_timeout_s: float = 30.0,
+        # 5s headroom under the server's 30s deadline so the answer POST has
+        # time to land before the server marks us timed out. Network RTT from
+        # Colab to the assignment server can spike past a second; killing the
+        # LLM at 25s lets us still submit even on bad-network draws.
+        llm_timeout_s: float = 25.0,
         rng: random.Random | None = None,
         sleeper: Callable[[float], None] | None = None,
         verbose: bool = False,
     ) -> None:
         if sleep_max < sleep_min:
             raise ValueError("sleep_max must be >= sleep_min")
+        if mode not in ("text", "speech"):
+            raise ValueError(f"unknown mode {mode!r}; expected 'text' or 'speech'")
+        if use_text_mode_retrieval and mode == "text":
+            # Nothing to fall back to -- 'text' rows are already the same-mode
+            # lookup. Catching this at construction beats silently doing nothing.
+            raise ValueError("use_text_mode_retrieval only makes sense when mode='speech'")
         self._inner = inner
         self._log = QuestionLog(db_path)
+        self._mode = mode
+        self._use_text_fallback = use_text_mode_retrieval
         self._sleep_min = sleep_min
         self._sleep_max = sleep_max
         self._llm_timeout_s = llm_timeout_s
@@ -90,18 +161,26 @@ class DbRetrievalStrategy:
     def __call__(self, question: Question, ctx: Context) -> AnswerDecision:
         start = time.perf_counter()
 
-        # The DB lookup short-circuits the inner LLM call when valid.
-        # Drift detection runs before the lookup so a poisoned index gets
-        # invalidated before we trust any of its rows.
+        # Same-mode lookup short-circuits the inner LLM call when valid.
+        # Drift detection runs first so a poisoned (id, text) mapping inside
+        # this mode invalidates the index before we trust any of its rows.
         if self._index_valid_or_invalidate(question):
-            known = self._log.lookup_known_correct(question.id, question.text)
+            known = self._log.lookup_known_correct(question.id, question.text, self._mode)
             if known is not None:
                 option_id = self._resolve_cached_option(question, known)
                 if option_id is not None:
-                    return self._db_hit_decision(option_id, start)
+                    return self._db_hit_decision(option_id, start, source="same-mode")
+
+        # Speech-mode cold-start: try text-mode rows for this question id.
+        # Cached option text is fuzzy-matched against the live (transcribed)
+        # option texts, so this still handles server-side reshuffles.
+        if self._use_text_fallback and self._mode == "speech":
+            cross_id = self._try_cross_mode_lookup(question)
+            if cross_id is not None:
+                return self._db_hit_decision(cross_id, start, source="text-mode-fallback")
 
         failed = (
-            self._log.lookup_failed_options(question.id, question.text)
+            self._log.lookup_failed_options(question.id, question.text, self._mode)
             if self._index_valid()
             else set()
         )
@@ -121,7 +200,7 @@ class DbRetrievalStrategy:
     def _index_valid_or_invalidate(self, question: Question) -> bool:
         if not self._index_valid():
             return False
-        prior = self._log.find_text_mismatch(question.id, question.text)
+        prior = self._log.find_text_mismatch(question.id, question.text, self._mode)
         if prior is None:
             return True
         # Loud, unmistakable banner -- and flip the flag so we don't
@@ -167,11 +246,13 @@ class DbRetrievalStrategy:
             )
         return None
 
-    def _db_hit_decision(self, option_id: int, start: float) -> AnswerDecision:
+    def _db_hit_decision(
+        self, option_id: int, start: float, *, source: str = "same-mode"
+    ) -> AnswerDecision:
         delay = self._rng.uniform(self._sleep_min, self._sleep_max)
         if self._verbose:
             print(
-                f"   [db_retrieval] DB hit -> option {option_id}; "
+                f"   [db_retrieval] DB hit ({source}) -> option {option_id}; "
                 f"sleeping {delay:.1f}s before submitting"
             )
         self._sleep(delay)
@@ -180,14 +261,50 @@ class DbRetrievalStrategy:
             option_id=option_id,
             confidence=1.0,
             rationale=(
-                f"DB lookup: server-confirmed correct option from a prior session. "
-                f"Submitted after {delay:.1f}s pacing delay."
+                f"DB lookup ({source}): server-confirmed correct option from a prior "
+                f"session. Submitted after {delay:.1f}s pacing delay."
             ),
             model_name=self.model_name,
             strategy_name=self.strategy_name,
             prompt_version=self.prompt_version,
             latency_ms=latency_ms,
         )
+
+    def _try_cross_mode_lookup(self, question: Question) -> int | None:
+        """Speech-mode fallback: read the text-mode row's confirmed-correct
+        option *text* and fuzzy-match it against this question's options.
+
+        We only succeed when exactly one option crosses _FUZZY_THRESHOLD; if
+        multiple do (ambiguous: e.g. two similar options) or none do (likely
+        an answer-key edit, or our ASR is too far off), we abstain. The
+        self-contradiction filter still applies: a fuzzy-resolved option that
+        we've already submitted in speech mode and missed gets rejected.
+        """
+        cached_text = self._log.lookup_known_correct_text(question.id, "text")
+        if cached_text is None:
+            return None
+        new_id = _fuzzy_resolve_option(question, cached_text)
+        if new_id is None:
+            if self._verbose:
+                print(
+                    f"   [db_retrieval] text-mode fallback for q{question.id}: cached "
+                    f"correct text {cached_text!r} did not fuzzy-match any current option"
+                )
+            return None
+        speech_failed = self._log.lookup_failed_options(question.id, question.text, "speech")
+        if new_id in speech_failed:
+            if self._verbose:
+                print(
+                    f"   [db_retrieval] text-mode fallback resolved to option {new_id} "
+                    "but speech-mode already proved that wrong; abstaining"
+                )
+            return None
+        if self._verbose:
+            print(
+                f"   [db_retrieval] text-mode fallback for q{question.id}: cached "
+                f"text {cached_text!r} -> option {new_id}"
+            )
+        return new_id
 
     def _run_inner_with_guards(
         self,

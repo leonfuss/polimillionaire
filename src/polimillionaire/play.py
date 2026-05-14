@@ -4,6 +4,13 @@
 `auto_play_loop` is its strategy-driven sibling: hand it a `Strategy` (e.g.
 `ZeroShotStrategy(load_llm("qwen3-8b"))`) and it plays games end-to-end,
 logging the same `predictions` schema so replay/eval works uniformly.
+
+`speech_auto_play_loop` is the speech-mode variant: starts a `mode="speech"`
+session, fetches Q+4 option WAVs via the audio endpoints, transcribes them
+with the provided `WhisperTranscriber`, then hands a synthetic Question
+(with ASR-derived text) to the strategy. The server's 30s clock starts on
+the fourth option fetch, so the helper deliberately defers that fetch to
+the last possible moment.
 """
 
 from __future__ import annotations
@@ -12,11 +19,16 @@ import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from polimillionaire._vendor.millionaire_client import MillionaireClient
-from polimillionaire._vendor.millionaire_client.models import Question
+from polimillionaire._vendor.millionaire_client.models import Option, Question
 from polimillionaire.recording import PredictionRecord, QuestionLog
 from polimillionaire.strategies.base import Context, Strategy
+
+if TYPE_CHECKING:
+    from polimillionaire._vendor.millionaire_client.game import GameSession
+    from polimillionaire.asr.whisper import WhisperTranscriber
 
 # Project root: <repo>/src/polimillionaire/play.py -> three parents up.
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -52,6 +64,17 @@ class _GameAnswer:
 # None signals "quit cleanly" (used by manual_play_loop's 'q' option).
 AnswerProvider = Callable[[Question, int, int], "_GameAnswer | None"]
 
+# (game, level) -> Question | None
+# Speech mode swaps in a builder that fetches the audio endpoints and
+# transcribes them; text mode just reads game.current_question. None means
+# the server has no question (game ended).
+QuestionBuilder = Callable[["GameSession", int], "Question | None"]
+
+
+def _text_question_builder(game: GameSession, _level: int) -> Question | None:
+    """Default builder: read the server-provided question text directly."""
+    return game.current_question
+
 
 def _play_one_game(
     client: MillionaireClient,
@@ -60,20 +83,28 @@ def _play_one_game(
     answer_provider: AnswerProvider,
     *,
     time_label: str = "",
+    mode: str = "text",
+    question_builder: QuestionBuilder = _text_question_builder,
 ) -> dict[str, int] | None:
     """Play one game, calling `answer_provider` for each question.
 
     `time_label` is appended to the level header (e.g. "left on the wire").
+    `mode` is "text" or "speech"; passed straight to `client.game.start` and
+    recorded on each PredictionRecord. Speech mode requires that callers
+    supplied a provider that knows how to fetch+transcribe audio (the
+    `Question` from `current_question` has `text=None` in speech mode).
     Returns a counts dict {"correct", "wrong", "timeouts"}, or None if the
     provider requested a clean quit.
     """
-    game = client.game.start(competition_id=competition_id)
-    print(f"=== session {game.session_id} ===")
+    game = client.game.start(competition_id=competition_id, mode=mode)
+    print(f"=== session {game.session_id} ({mode}) ===")
 
     counts: dict[str, int] = {"correct": 0, "wrong": 0, "timeouts": 0}
+    builder = question_builder
 
     while game.in_progress:
-        q = game.current_question
+        current_level = game.current_question.level if game.current_question else game.current_level
+        q = builder(game, current_level)
         if not q:
             break
 
@@ -119,6 +150,7 @@ def _play_one_game(
                 confidence=answer.confidence,
                 rationale=answer.rationale,
                 latency_ms=answer.latency_ms,
+                mode=mode,
             )
         )
 
@@ -221,6 +253,109 @@ def auto_play_loop(
         print(f"=== game {game_num + 1}/{max_games} ===")
         counts = _play_one_game(
             client, competition_id, log, _auto_provider, time_label="left on the wire"
+        )
+        if counts is not None:
+            for k in summary:
+                summary[k] += counts[k]
+        print()
+
+    print(f"summary: {summary}")
+    return summary
+
+
+def _speech_question_builder(
+    transcriber: WhisperTranscriber, *, verbose: bool = True
+) -> QuestionBuilder:
+    """Build a question_builder that fetches WAV audio and transcribes it.
+
+    Fetch order matters: question, then options 0..2, then option 3 *last*.
+    The server starts the 30 s clock on the option-3 fetch, so transcribing
+    everything before then is free time. Whisper-large-v3-turbo on a 5 s
+    clip runs in ~0.3-0.8 s on a warm GPU, so all four transcriptions
+    typically complete well inside the pre-clock window.
+    """
+
+    def _build(game: GameSession, level: int) -> Question | None:
+        if game.current_question is None:
+            return None
+        # Server-side question id is real even when text is None.
+        qid = game.current_question.id
+
+        if verbose:
+            print(f"  level {level}: fetching question audio...", end="", flush=True)
+        wav_q = game.fetch_audio_question()
+        text_q = transcriber.transcribe(wav_q)
+        if verbose:
+            print(f" {len(wav_q)} B -> {text_q!r}")
+
+        option_texts: list[str] = []
+        for i in range(4):
+            letter = chr(ord("A") + i)
+            if verbose:
+                print(f"  level {level}: fetching option {letter} audio...", end="", flush=True)
+            wav_o = game.fetch_audio_option_next()
+            text_o = transcriber.transcribe(wav_o)
+            if verbose:
+                print(f" {len(wav_o)} B -> {text_o!r}")
+            option_texts.append(text_o)
+
+        return Question(
+            id=qid,
+            text=text_q,
+            options=[Option(id=i, text=t) for i, t in enumerate(option_texts)],
+            level=level,
+        )
+
+    return _build
+
+
+def speech_auto_play_loop(
+    client: MillionaireClient,
+    competition_id: int,
+    strategy: Strategy,
+    transcriber: WhisperTranscriber,
+    db_path: str | None = None,
+    max_games: int = 1,
+    *,
+    verbose: bool = True,
+) -> dict[str, int]:
+    """Play `max_games` speech-mode games using `strategy` + `transcriber`.
+
+    Mirrors `auto_play_loop`, but starts each session with `mode="speech"`
+    and replaces the server-provided question text (which is None in speech
+    mode) with the Whisper transcript of the question + option audios.
+
+    Logged rows carry `mode='speech'`. Use `make_strategy(..., mode="speech",
+    use_text_mode_retrieval=True)` to also consult prior text-mode rows on
+    a cold start.
+    """
+    log = QuestionLog(_resolve_db_path(db_path))
+    summary: dict[str, int] = {"correct": 0, "wrong": 0, "timeouts": 0}
+
+    def _provider(q: Question, level: int, comp_id: int) -> _GameAnswer:
+        ctx = Context(competition_id=comp_id, level=level)
+        decision = strategy(q, ctx)
+        return _GameAnswer(
+            option_id=decision.option_id,
+            confidence=decision.confidence,
+            rationale=decision.rationale,
+            model_name=decision.model_name,
+            strategy_name=decision.strategy_name,
+            prompt_version=decision.prompt_version,
+            latency_ms=decision.latency_ms,
+        )
+
+    builder = _speech_question_builder(transcriber, verbose=verbose)
+    for game_num in range(max_games):
+        print(f"=== game {game_num + 1}/{max_games} (speech) ===")
+        counts = _play_one_game(
+            client,
+            competition_id,
+            log,
+            _provider,
+            time_label="left on the wire",
+            mode="speech",
+            question_builder=builder,
         )
         if counts is not None:
             for k in summary:
