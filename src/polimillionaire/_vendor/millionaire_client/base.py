@@ -16,11 +16,11 @@ from .exceptions import (
 
 class BaseClient:
     """Base HTTP client handling authentication and request/response logic."""
-
+    
     def __init__(self, base_url: str, timeout: int = 30):
         """
         Initialize the base client.
-
+        
         Args:
             base_url: The base URL of the API (e.g., "http://localhost:4000")
             timeout: Default request timeout in seconds
@@ -29,26 +29,26 @@ class BaseClient:
         self.timeout = timeout
         self._session = requests.Session()
         self._auth_cookie: Optional[str] = None
-
+    
     def _get_full_url(self, endpoint: str) -> str:
         """Construct full URL from endpoint."""
         return urljoin(f"{self.base_url}/", endpoint.lstrip("/"))
-
+    
     def set_auth_cookie(self, cookie_value: str):
         """Set the authentication cookie manually."""
         self._auth_cookie = cookie_value
         self._session.cookies.set("polimillionaire_auth", cookie_value)
-
+    
     def clear_auth(self):
         """Clear authentication."""
         self._auth_cookie = None
         self._session.cookies.clear()
-
+    
     @property
     def is_authenticated(self) -> bool:
         """Check if client has authentication."""
         return "polimillionaire_auth" in self._session.cookies
-
+    
     def _handle_response(self, response: requests.Response) -> Dict[str, Any]:
         """Handle API response and raise appropriate exceptions."""
         try:
@@ -58,7 +58,7 @@ class BaseClient:
 
         if response.status_code in (200, 201, 204):
             return data
-
+        
         message = data.get("message", data.get("error", f"HTTP {response.status_code}"))
 
         if response.status_code == 401:
@@ -73,7 +73,7 @@ class BaseClient:
             raise ServerError(message, response.status_code, data)
         else:
             raise MillionaireError(message, response.status_code, data)
-
+    
     def request(
         self,
         method: str,
@@ -81,11 +81,12 @@ class BaseClient:
         data: Optional[Dict] = None,
         params: Optional[Dict] = None,
         headers: Optional[Dict] = None,
-        auth_required: bool = True
-    ) -> Dict[str, Any]:
+        auth_required: bool = True,
+        raw: bool = False
+    ) -> Any:
         """
         Make an HTTP request to the API.
-
+        
         Args:
             method: HTTP method (GET, POST, etc.)
             endpoint: API endpoint path
@@ -93,20 +94,20 @@ class BaseClient:
             params: Query parameters
             headers: Additional headers
             auth_required: Whether authentication is required
-
+            
         Returns:
             Parsed JSON response
-
+            
         Raises:
             AuthenticationError: If auth_required and not authenticated
             Various MillionaireError subclasses based on response status
         """
         if auth_required and not self.is_authenticated:
             raise AuthenticationError("Authentication required. Call login() first.")
-
+        
         url = self._get_full_url(endpoint)
         request_headers = headers or {}
-
+        
         try:
             if method.upper() == "GET":
                 response = self._session.get(
@@ -130,30 +131,34 @@ class BaseClient:
                 )
             else:
                 raise ValueError(f"Unsupported HTTP method: {method}")
-
+            
+            if raw:
+                if response.status_code in (200, 201, 204):
+                    return response.content
+                # For error responses, fall through to normal handling
             return self._handle_response(response)
-
+            
         except requests.Timeout:
             raise MillionaireError(f"Request to {endpoint} timed out after {self.timeout}s")
         except requests.ConnectionError as e:
             raise MillionaireError(f"Could not connect to server at {self.base_url}: {e}")
-
-    def get(self, endpoint: str, **kwargs) -> Dict[str, Any]:
+    
+    def get(self, endpoint: str, **kwargs) -> Any:
         """Make a GET request."""
         return self.request("GET", endpoint, **kwargs)
-
-    def post(self, endpoint: str, **kwargs) -> Dict[str, Any]:
+    
+    def post(self, endpoint: str, **kwargs) -> Any:
         """Make a POST request."""
         return self.request("POST", endpoint, **kwargs)
-
-    def put(self, endpoint: str, **kwargs) -> Dict[str, Any]:
+    
+    def put(self, endpoint: str, **kwargs) -> Any:
         """Make a PUT request."""
         return self.request("PUT", endpoint, **kwargs)
-
-    def patch(self, endpoint: str, **kwargs) -> Dict[str, Any]:
+    
+    def patch(self, endpoint: str, **kwargs) -> Any:
         """Make a PATCH request."""
         return self.request("PATCH", endpoint, **kwargs)
-
-    def delete(self, endpoint: str, **kwargs) -> Dict[str, Any]:
+    
+    def delete(self, endpoint: str, **kwargs) -> Any:
         """Make a DELETE request."""
         return self.request("DELETE", endpoint, **kwargs)

@@ -6,20 +6,20 @@ Students can use this to programmatically play the game and build automated answ
 
 Basic Usage:
     from millionaire_client import MillionaireClient
-
+    
     client = MillionaireClient("http://localhost:4000")
     client.login("username", "password")
-
+    
     # Start a game
     game = client.game.start(competition_id=1)
-
+    
     # Answer questions
     while game.in_progress:
         question = game.current_question
         print(f"Q: {question.text}")
         for opt in question.options:
             print(f"  {opt.id}: {opt.text}")
-
+        
         # Your answering logic here
         result = game.answer(option_id=1)
         print(f"Correct: {result.correct}")

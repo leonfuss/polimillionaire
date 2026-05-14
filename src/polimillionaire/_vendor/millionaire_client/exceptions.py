@@ -3,7 +3,7 @@ from typing import Optional
 
 class MillionaireError(Exception):
     """Base exception for all Millionaire client errors."""
-
+    
     def __init__(
         self,
         message: str,
