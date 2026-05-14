@@ -3,6 +3,91 @@
 What we tried, what we learned, why we changed it. Newest first.
 Pairs with git history but reads like notes — the *why*, not the diff.
 
+## 2026-05-14 — Calculator: count_integers_satisfying + targeted ERROR hints
+
+Two failure-mode clusters observed during a live competition-3 run:
+
+1. **Python comprehensions inside `calc()`**. The LLM naturally writes
+   `len({Rational(n, d) for n in [2,3,4,6] for d in [2,3,4,6]})` for
+   "how many distinct fractions" questions. sympify is a math-expression
+   parser, not a Python parser -- it rejects comprehensions outright,
+   and the raw `SyntaxError: cannot assign to function call` gave the
+   model nothing actionable. It retried the same idea with renamed vars
+   and timed out the question.
+
+2. **`solve()` with `floor()`/`ceil()`**. The Legendre-formula style
+   question ("for how many k does k! end in exactly 99 zeros") expanded
+   to `solve(floor(k/5) + floor(k/25) + floor(k/125) + floor(k/625) - 99, k)`.
+   Sympy raised `NotImplementedError: multiple generators` because no
+   algorithm exists for symbolic floor solving. Same retry-and-timeout
+   pattern.
+
+Fixes:
+
+- **`count_integers_satisfying(expr, var, lo, hi)` helper**, added to
+  `STATS_LOCALS`. Substitutes integer values of `var` in [lo, hi] into
+  `expr`, counts where it simplifies to 0 (numeric form) or True
+  (relational / boolean form). Range is hard-capped at `MAX_ENUM_RANGE =
+  100_000`; substituted expressions are still subject to the Pow guard,
+  so a `count_integers_satisfying(k**(10**10), ...)` can't smuggle a
+  bignum hang through the back door.
+- **`_hint_for_failure(expression, exc)`**: a short "HINT: ..." suffix
+  appended to `calc()`'s ERROR string when the calculator detects
+  known recoverable failure patterns. Two patterns covered:
+  - Comprehension or `len(...)` syntax → suggests `FiniteSet(...)` for
+    distinct-value counting and `count_integers_satisfying(...)` for
+    integer ranges.
+  - `NotImplementedError` from `solve()` containing `floor`/`ceil` →
+    suggests `count_integers_satisfying(...)` directly.
+
+The hints are appended to the existing `ERROR: <type>: <msg>` so they
+ride through the ReAct loop as part of the calculator's next-turn
+observation. The LLM sees the typed error first (lets it parse for
+class), then the hint string with concrete recovery syntax.
+
+Nine new tests cover: factorial-trailing-zeros enumeration (the exact
+live failure -> count returns 5 for k in [400, 404]), `Eq` predicate,
+inequality predicate, empty range, range-too-large rejection, Pow
+guard inside the helper, comprehension hint, solve+floor hint, and
+no-hint on unrelated syntax errors. Calculator suite is now 31 green
+(was 22).
+
+## 2026-05-14 — Calculator hang fix + subprocess timeout
+
+Live run on competition 3 (Maths) wedged on "What day of the week will
+it be 10^(10^(10)) days from now?". The LLM emitted `10**(10**10)` as
+its first calc step; sympy parsed the inner Pow with `evaluate=True`,
+which delegates to CPython's `int.__pow__`, which spun forever in
+`longobject.c::long_pow` trying to materialise a 10-billion-digit
+integer. CPython holds the GIL through C-level bignum ops, so the
+wrapper's thread-pool `future.result(timeout=...)` returned, but the
+orphan thread kept the interpreter pinned -- subsequent questions
+couldn't make progress and only a kernel restart cleared it.
+
+Two-layer fix:
+
+1. **In-process Pow guard** (`MAX_POW_EXPONENT = 10_000`). Sympify
+   switched to `evaluate=False` so the parse step never triggers
+   `int.__pow__`; we walk the lazy tree, reject any Pow whose
+   integer exponent (or one-level-nested Pow estimating an integer)
+   exceeds the bound, then `expr.doit()` to evaluate the safe rest.
+   The error string hints at modular arithmetic so the ReAct loop has
+   a recovery direction on its next step.
+2. **Subprocess hard timeout** (`calc_with_timeout`, default 5 s).
+   `concurrent.futures.ProcessPoolExecutor` with spawn context, single
+   long-lived worker, terminated + respawned on timeout. Catches the
+   unknown-shape hangs the in-process guard can't predict (deep
+   symbolic expansion, large factorials, etc.) at the cost of one
+   subprocess round-trip per call (~5-20 ms after warmup; ~0.5-1 s on
+   the first call as the worker imports sympy). `_common.py` switched
+   from `calc` to `calc_with_timeout` for live use; `calc` itself is
+   kept synchronous for direct tests.
+
+Five new tests: two for `_exceeds_pow_limit` against constructed
+expression trees (flat huge exponent, nested-pow exponent), three for
+end-to-end behaviour (rejects huge inner/flat, accepts modest, and a
+sanity check for the subprocess wrapper).
+
 ## 2026-05-14 — Speech-mode support: ASR + mode-aware DB retrieval
 
 The staff dropped the audio interface promised in the brief. A live

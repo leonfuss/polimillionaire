@@ -13,7 +13,7 @@ from typing import Any
 from polimillionaire._vendor.millionaire_client.models import Question
 from polimillionaire.llm import LLM, Message
 from polimillionaire.strategies.base import AnswerDecision
-from polimillionaire.tools import calc
+from polimillionaire.tools import calc_with_timeout
 
 
 def build_decision(
@@ -177,7 +177,7 @@ def run_react_loop(
             if verbose:
                 print(f"   [{log_prefix}] duplicate calc expression — forcing answer")
             break
-        result = calc(expression)
+        result = calc_with_timeout(expression)
         if verbose:
             print(f'   [{log_prefix}] calc("{expression}") -> {result}')
         messages.append({"role": "assistant", "content": json.dumps(out)})

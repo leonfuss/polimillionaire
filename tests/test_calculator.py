@@ -117,3 +117,151 @@ def test_calc_rejects_arbitrary_python() -> None:
 def test_calc_handles_empty_string() -> None:
     out = calc("")
     assert out.startswith("ERROR:")
+
+
+def test_pow_guard_detects_flat_huge_exponent() -> None:
+    """`Pow(2, 100001)` (flat) should be rejected by the guard, exercised
+    directly on the expression tree so the test never depends on sympify's
+    parse-time evaluation behaviour."""
+    import sympy
+
+    from polimillionaire.tools.calculator import MAX_POW_EXPONENT, _exceeds_pow_limit
+
+    safe = sympy.Pow(sympy.Integer(2), sympy.Integer(100), evaluate=False)
+    huge = sympy.Pow(sympy.Integer(2), sympy.Integer(MAX_POW_EXPONENT + 1), evaluate=False)
+    assert _exceeds_pow_limit(safe) is False
+    assert _exceeds_pow_limit(huge) is True
+
+
+def test_pow_guard_detects_nested_exponent() -> None:
+    """The reported hang: `10**(10**10)`. Outer Pow's exponent is itself a
+    Pow node with concrete Integer base+exp. The guard estimates the inner
+    without materialising and rejects."""
+    import sympy
+
+    from polimillionaire.tools.calculator import _exceeds_pow_limit
+
+    inner = sympy.Pow(sympy.Integer(10), sympy.Integer(10), evaluate=False)  # = 10b symbolic
+    outer = sympy.Pow(sympy.Integer(10), inner, evaluate=False)
+    assert _exceeds_pow_limit(outer) is True
+
+
+def test_calc_rejects_huge_inner_exponent_without_hanging() -> None:
+    """End-to-end via calc(): the user-emitted "10**(10**10)" must come
+    back as an ERROR string with the modular-arithmetic hint, NOT hang."""
+    out = calc("10**(10**10)")
+    assert out.startswith("ERROR:")
+    assert "exponent" in out
+    assert "modular" in out.lower() or "mod" in out.lower()
+
+
+def test_calc_rejects_direct_huge_exponent() -> None:
+    """Flat `2**100000`: 30k-digit result, materializable in ~ms but the
+    guard refuses because the LLM can't usefully display it. Forces
+    modular reasoning instead."""
+    out = calc("2**100000")
+    assert out.startswith("ERROR:")
+    assert "exponent" in out
+
+
+def test_calc_accepts_modest_exponent() -> None:
+    """Polynomials and reasonable powers must not be caught by the guard."""
+    out = calc("2**100")
+    assert not out.startswith("ERROR:")
+    # 2**100 = 1267650600228229401496703205376 -- evalf comes back ~1.26e30.
+    assert out.startswith("1.26765")
+
+
+def test_calc_with_timeout_passes_through_fast_calls() -> None:
+    """The subprocess wrapper should return correct results on cheap calls.
+    First call pays ~0.5-1s for the worker to import sympy; that's
+    acceptable in a calc-react loop where each step already costs 1-3s."""
+    from polimillionaire.tools import calc_with_timeout
+
+    out = calc_with_timeout("2 + 2", timeout=30.0)
+    assert out.startswith("4")
+
+
+# ---- count_integers_satisfying --------------------------------------------
+
+
+def test_count_integers_solves_factorial_trailing_zeros_99() -> None:
+    """Live failure case: 'For how many positive integers k does k! end in
+    exactly 99 trailing zeros?' Legendre: floor(k/5) + floor(k/25) + ... = 99
+    holds for k in [400, 404] (k=400 picks up the new 5^3 factor, k=405
+    bumps to 100). Answer: Five."""
+    out = calc(
+        "count_integers_satisfying("
+        "floor(k/5) + floor(k/25) + floor(k/125) + floor(k/625) - 99, "
+        "k, 300, 500)"
+    )
+    # evalf gives "5.000..." -- the count itself is an Integer.
+    assert out.startswith("5")
+    assert not out.startswith("ERROR:")
+
+
+def test_count_integers_handles_eq_predicate() -> None:
+    """Relational predicates: Eq(k**2, 25) is True only at k=5 (and k=-5,
+    but we scan [1, 10])."""
+    out = calc("count_integers_satisfying(Eq(k**2, 25), k, 1, 10)")
+    assert out.startswith("1")
+
+
+def test_count_integers_handles_inequality_predicate() -> None:
+    """Gt predicate: how many k in [1, 10] have k**2 > 50? k=8,9,10."""
+    out = calc("count_integers_satisfying(k**2 - 50 > 0, k, 1, 10)")
+    assert out.startswith("3")
+
+
+def test_count_integers_empty_range_returns_zero() -> None:
+    """hi < lo is treated as the empty range, not an error."""
+    out = calc("count_integers_satisfying(k - 5, k, 10, 1)")
+    assert out.startswith("0")
+
+
+def test_count_integers_rejects_oversized_range() -> None:
+    """MAX_ENUM_RANGE bounds the loop so a runaway scan can't burn the
+    whole budget. The error surfaces back to the LLM with the actual
+    limit so it can narrow the window."""
+    out = calc("count_integers_satisfying(k - 1, k, 0, 10**6)")
+    assert out.startswith("ERROR:")
+    assert "range" in out.lower()
+
+
+def test_count_integers_rejects_huge_pow_in_expression() -> None:
+    """The Pow guard applies inside the helper too -- substituting
+    Pow(k, 10**10) at any k would re-trigger the bignum hang."""
+    # Construct via str so we don't materialise the inner power at parse.
+    out = calc("count_integers_satisfying(k**(10**10) - 1, k, 1, 5)")
+    assert out.startswith("ERROR:")
+
+
+# ---- targeted error hints -------------------------------------------------
+
+
+def test_calc_hint_on_python_comprehension() -> None:
+    """Live failure case: LLM emits Python set comprehension. The raw
+    SympifyError ('cannot assign to function call') is useless to the
+    model; we append a hint pointing at the sympy-friendly alternatives."""
+    out = calc("len({Rational(n, d) for n in [2,3,4,6] for d in [2,3,4,6]})")
+    assert out.startswith("ERROR:")
+    assert "HINT" in out
+    assert "FiniteSet" in out or "count_integers_satisfying" in out
+
+
+def test_calc_hint_on_solve_with_floor() -> None:
+    """Live failure case: solve(floor(k/5) + ... = 99) raises
+    NotImplementedError('multiple generators'). Hint should steer the
+    model to count_integers_satisfying."""
+    out = calc("solve(floor(k/5) + floor(k/25) + floor(k/125) - 99, k)")
+    assert out.startswith("ERROR:")
+    assert "HINT" in out
+    assert "count_integers_satisfying" in out
+
+
+def test_calc_no_hint_on_unrelated_error() -> None:
+    """An ordinary syntax-only mistake (e.g. unmatched paren) gets the
+    bare ERROR without a misleading hint."""
+    out = calc("2 + (")
+    assert out.startswith("ERROR:")
+    assert "HINT" not in out
