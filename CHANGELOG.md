@@ -3,6 +3,61 @@
 What we tried, what we learned, why we changed it. Newest first.
 Pairs with git history but reads like notes — the *why*, not the diff.
 
+## 2026-05-14 — Live Wikipedia lookup for entertainment + science wiki_rag
+
+Entertainment and science are the two non-math categories where the static
+wiki indexes underperform. The failure mode isn't *missing topic* — the
+corpus is 794k passages for entertainment alone — it's **stale or
+disambiguation-shifted**: the index was crawled once at build time, and a
+film/album/discovery added or revised since then is either absent or
+indexed under a different lead section than the current Wikipedia version.
+The static reranker confidently picks a plausible-looking-but-wrong passage
+and the LLM follows it.
+
+**Per-question MediaWiki lookup, fused into the rerank pool.** New module
+`retrieval/live_wiki.py` exposes a `LiveWikiRetriever.search(query)` that
+hits `action=query&list=search` then `prop=extracts&exintro=1` in two
+batched calls (~0.3-0.5s end-to-end from a warm Kaggle session). Returns
+`Passage` objects with `source="live_wiki"` and `id="live/<title>"` so the
+prompt formatter and reranker see them uniformly with the static hits.
+
+The fusion point is *before* the cross-encoder reranker in
+`WikiRagStrategy`: `pool = static_fused + live_passages`, then rerank,
+then min-score floor. The reranker decides whether a live hit beats the
+static candidates -- we don't pre-judge it. Dedup is case-insensitive
+on `metadata.title` so the reranker never reads the same article twice.
+
+**Always-fused, not fallback-only.** Considered "only call live API when
+top static rerank score < threshold" but the entertainment failure mode
+is *plausible-looking-but-stale* static hits — i.e. the threshold would
+pass and live lookup would never trigger on exactly the questions we
+need it for. Cost is two extra HTTP calls per question (~0.3-0.5s); LLM
+step dominates at ~10s, so the latency tax is fine. History stays
+static-only — it doesn't drift, and free latency for ~83% replay-acc
+isn't worth shaving.
+
+**Failure handling is non-negotiable.** Every API path catches and
+returns `[]` with a logged reason. A 429 from a shared Kaggle egress IP
+(the same class of failure that killed the math-wiki crawl last session)
+must not abort an answer — the static fused pool carries the question.
+Retries reuse `wiki_crawler._get_with_retry` which already honours
+`Retry-After`.
+
+**Verbose logging at every stage.** When `verbose=True`, the strategy
+prints: query (truncated to 80 chars), search-returned titles, the
+dedup count, the static/live/total pool size, and a final `(N live)`
+tag on the retrieved-passages line so you can tell at a glance which
+hits won the rerank. Needed for tuning per-competition `live_k` from
+live-play logs.
+
+**Defaults via the auto router.** `_AUTO_WIKI_DEFAULTS[0]` and `[2]` now
+carry `live_lookup=True`; `[1]` (history) explicitly omits it. The
+`LiveWikiRetriever` is cached on `_live_wiki_cache` so the requests
+session and the in-process query cache survive across competitions.
+
+Will validate live next; needs Kaggle internet-on for the API to be
+reachable.
+
 ## 2026-05-13 — Math-wiki augmentation for the math RAG corpus
 
 Multiple live runs failed on topics the Hendrycks MATH dataset just doesn't

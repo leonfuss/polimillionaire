@@ -58,6 +58,10 @@ _embedder_cache: dict[str, Any] = {}
 _math_retriever_cache: dict[str, Any] = {}
 _wiki_components_cache: dict[str, Any] = {}
 _reranker_cache: dict[str, Any] = {}
+# LiveWikiRetriever holds a requests.Session + an in-process query cache;
+# one shared instance per session keeps the session warm and lets the
+# cache hit across competitions for any incidental overlap.
+_live_wiki_cache: dict[str, Any] = {}
 
 
 def register(name: str) -> Callable[[StrategyBuilder], StrategyBuilder]:
@@ -150,6 +154,19 @@ def _get_reranker(model_name: str | None = None) -> Any:
     if key not in _reranker_cache:
         _reranker_cache[key] = Reranker(key) if model_name else Reranker()
     return _reranker_cache[key]
+
+
+def _get_live_wiki(*, verbose: bool = False) -> Any:
+    """Singleton LiveWikiRetriever shared across competitions for this session."""
+    from polimillionaire.retrieval.live_wiki import LiveWikiRetriever
+
+    key = "default"
+    if key not in _live_wiki_cache:
+        _live_wiki_cache[key] = LiveWikiRetriever(verbose=verbose)
+    elif verbose:
+        # Honour a later verbose=True without rebuilding the cache.
+        _live_wiki_cache[key]._verbose = True
+    return _live_wiki_cache[key]
 
 
 def _math_retriever(project_root: Path) -> Any:
@@ -283,6 +300,7 @@ def _build_wiki_rag(
     competition_id: int | None = None,
     project_root: Path | None = None,
     strict: bool = False,
+    live_lookup: bool = False,
     **kw: Any,
 ) -> Strategy:
     from polimillionaire.strategies.wiki_rag import WikiRagStrategy
@@ -300,17 +318,29 @@ def _build_wiki_rag(
         # _wiki_components already printed why; degrade silently to bare LLM.
         return ZeroShotStrategy(llm, **_accepts(ZeroShotStrategy, **kw))
     retriever, bm25, reranker = components
-    return WikiRagStrategy(llm, retriever, bm25, reranker, **_accepts(WikiRagStrategy, **kw))
+    live = _get_live_wiki(verbose=kw.get("verbose", False)) if live_lookup else None
+    return WikiRagStrategy(
+        llm, retriever, bm25, reranker, live=live, **_accepts(WikiRagStrategy, **kw)
+    )
 
 
 # Per-competition wiki_rag tuning. Entertainment's 794k-passage corpus is ~4x
 # the size of history and ~2x science -- the relevant doc is more likely to be
 # outside the default nprobe=32 / top-50 candidate window, so widen for it.
+# `live_lookup` enables per-question Wikipedia API fusion: on for the two
+# drifting categories (entertainment, science), off for history (stable).
 # Override on a per-call basis by passing kwargs to make_strategy("auto", ...).
 _AUTO_WIKI_DEFAULTS: dict[int, dict[str, Any]] = {
-    0: {"nprobe": 128, "dense_k": 100, "sparse_k": 100, "fused_k": 50, "top_k": 8},
+    0: {
+        "nprobe": 128,
+        "dense_k": 100,
+        "sparse_k": 100,
+        "fused_k": 50,
+        "top_k": 8,
+        "live_lookup": True,
+    },
     1: {},  # history -- defaults work well, ~83% in replay
-    2: {},  # science -- defaults work well, ~91% in replay
+    2: {"live_lookup": True},  # science -- live picks up post-crawl discoveries
 }
 
 

@@ -244,6 +244,91 @@ def test_reranker_receives_configured_top_k() -> None:
     assert reranker.last_top_k == 3
 
 
+class _FakeLive:
+    """Stand-in for LiveWikiRetriever -- same `search()` shape, no HTTP."""
+
+    def __init__(self, passages: list[Passage]) -> None:
+        self.passages = passages
+        self.queries: list[str] = []
+
+    def search(self, query: str, k: int | None = None) -> list[Passage]:
+        self.queries.append(query)
+        return self.passages if k is None else self.passages[:k]
+
+
+def test_live_passages_join_rerank_pool() -> None:
+    """When `live` is set, its hits are passed to the reranker alongside
+    the static fused pool. The combined pool's size must reflect both."""
+    fake = _FakeLLM({"rationale": "r", "confidence": 0.5, "answer_id": 1})
+
+    class _CountingReranker(_FakeReranker):
+        seen: list[Passage] = []
+
+        def rerank(self, query: str, passages: list[Passage], *, top_k=None):  # noqa: ARG002
+            self.seen = list(passages)
+            return super().rerank(query, passages, top_k=top_k)
+
+    live_hit = Passage(
+        id="live/Inception",
+        text="2010 Nolan film about dreams.",
+        metadata={"source": "live_wiki", "title": "Inception"},
+        score=1.0,
+    )
+    counting = _CountingReranker()
+    strategy = _make_strategy(fake, reranker=counting, live=_FakeLive([live_hit]), live_k=1)
+    strategy(_make_question(), _ctx())
+
+    # static (_PASSAGES has 2) + live (1) = 3 passages reach the reranker
+    pool_ids = {p.id for p in counting.seen}
+    assert "live/Inception" in pool_ids
+    assert "p1" in pool_ids and "p2" in pool_ids
+
+
+def test_live_dedup_by_title_against_static_pool() -> None:
+    """If a live hit's title is already in the static fused list, drop it
+    so the reranker isn't reading the same article twice."""
+    fake = _FakeLLM({"rationale": "r", "confidence": 0.5, "answer_id": 1})
+
+    class _CountingReranker(_FakeReranker):
+        seen: list[Passage] = []
+
+        def rerank(self, query: str, passages: list[Passage], *, top_k=None):  # noqa: ARG002
+            self.seen = list(passages)
+            return super().rerank(query, passages, top_k=top_k)
+
+    # Static `_PASSAGES[0]` has metadata title "France"; the live hit
+    # shares that title with different casing -- dedup must be case-insensitive.
+    dup = Passage(
+        id="live/France",
+        text="France is a country.",
+        metadata={"source": "live_wiki", "title": "france"},
+        score=1.0,
+    )
+    counting = _CountingReranker()
+    strategy = _make_strategy(fake, reranker=counting, live=_FakeLive([dup]), live_k=1)
+    strategy(_make_question(), _ctx())
+
+    pool_ids = {p.id for p in counting.seen}
+    assert "live/France" not in pool_ids
+
+
+def test_live_disabled_when_no_retriever_supplied() -> None:
+    """The strategy without a `live` retriever must behave exactly as before."""
+    fake = _FakeLLM({"rationale": "r", "confidence": 0.5, "answer_id": 1})
+
+    class _CountingReranker(_FakeReranker):
+        seen: list[Passage] = []
+
+        def rerank(self, query: str, passages: list[Passage], *, top_k=None):  # noqa: ARG002
+            self.seen = list(passages)
+            return super().rerank(query, passages, top_k=top_k)
+
+    counting = _CountingReranker()
+    strategy = _make_strategy(fake, reranker=counting)
+    strategy(_make_question(), _ctx())
+    assert all(p.id in {"p1", "p2"} for p in counting.seen)
+
+
 def test_schema_constrains_answer_id_to_question_options() -> None:
     fake = _FakeLLM({"rationale": "r", "confidence": 0.5, "answer_id": 1})
     strategy = _make_strategy(fake)

@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     # Heavy deps live behind the optional [rag] group; deferred so this module
     # can be imported on a base install -- only instantiation needs [rag].
     from polimillionaire.retrieval.bm25 import BM25Index
+    from polimillionaire.retrieval.live_wiki import LiveWikiRetriever
     from polimillionaire.retrieval.reranker import Reranker
     from polimillionaire.retrieval.retriever import Retriever
 
@@ -40,6 +41,8 @@ class WikiRagStrategy:
         bm25: BM25Index,
         reranker: Reranker,
         *,
+        live: LiveWikiRetriever | None = None,
+        live_k: int = 4,
         dense_k: int = 50,
         sparse_k: int = 50,
         fused_k: int = 25,
@@ -69,6 +72,8 @@ class WikiRagStrategy:
         self._retriever = retriever
         self._bm25 = bm25
         self._reranker = reranker
+        self._live = live
+        self._live_k = live_k
         self._dense_k = dense_k
         self._sparse_k = sparse_k
         self._fused_k = fused_k
@@ -106,10 +111,45 @@ class WikiRagStrategy:
                 rankings.append(self._bm25.search(query, k=self._sparse_k))
             # single-list rrf is a rank-ordered passthrough — still correct
             fused = reciprocal_rank_fusion(rankings, top_n=self._fused_k)
+
+            # Live wiki lookup, when enabled, augments the rerank pool with
+            # per-question Wikipedia hits. Static index covers high-traffic
+            # topics but is frozen at crawl time; live lookup picks up the
+            # long tail (recent films, obscure scientists). Dedup by article
+            # title against the static fused list so the reranker doesn't
+            # see the same article twice.
+            live_passages: list = []
+            if self._live is not None and self._live_k > 0:
+                live_passages = self._live.search(query, k=self._live_k)
+                if live_passages:
+                    static_titles = {
+                        p.metadata.get("title", "").lower()
+                        for p in fused
+                        if p.metadata.get("title")
+                    }
+                    before = len(live_passages)
+                    live_passages = [
+                        p
+                        for p in live_passages
+                        if p.metadata.get("title", "").lower() not in static_titles
+                    ]
+                    if self._verbose and len(live_passages) < before:
+                        print(
+                            f"   [wiki_rag] live: dropped {before - len(live_passages)} "
+                            "title(s) already in static pool"
+                        )
+
+            pool = fused + live_passages
+            if self._verbose:
+                print(
+                    f"   [wiki_rag] pool: {len(fused)} static + {len(live_passages)} live "
+                    f"= {len(pool)} candidates"
+                )
+
             if self._use_reranker:
-                top_passages = self._reranker.rerank(query, fused, top_k=self._top_k)
+                top_passages = self._reranker.rerank(query, pool, top_k=self._top_k)
             else:
-                top_passages = fused[: self._top_k]
+                top_passages = pool[: self._top_k]
         except Exception as e:  # noqa: BLE001 -- never block answering on retrieval
             if self._verbose:
                 print(
@@ -134,8 +174,10 @@ class WikiRagStrategy:
             top_passages = kept
 
         if self._verbose and top_passages:
+            n_live = sum(1 for p in top_passages if p.metadata.get("source") == "live_wiki")
+            tag = f" ({n_live} live)" if n_live else ""
             print(
-                "   [wiki_rag] retrieved "
+                f"   [wiki_rag] retrieved{tag} "
                 + ", ".join(f"{p.id} ({p.score:.2f})" for p in top_passages)
             )
         elif self._verbose:
