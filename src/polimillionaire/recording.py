@@ -214,33 +214,66 @@ class QuestionLog:
                     return prior
         return None
 
-    def lookup_known_correct(self, question_id: int, question_text: str) -> int | None:
-        """Return a server-confirmed correct option_id for this question, or None.
+    def lookup_known_correct(self, question_id: int, question_text: str) -> tuple[int, str] | None:
+        """Return (option_id, option_text) for a server-confirmed correct
+        answer, or None.
 
-        Filters out `generated_answer=1` rows (our own reasoning, not server
-        truth) and requires the logged text to match exactly so we don't
-        cross-contaminate after a drift event.
+        The text is the option's text *at the moment the server confirmed
+        it* (pulled from `options_json` of that row). Callers verify it
+        against the current question's option set so reshuffled option ids
+        or admin-edited answer keys don't trick us into submitting a stale
+        pick.
+
+        Filters:
+        - `generated_answer=0` (server truth only, not our own reasoning)
+        - Rows where the option_id also appears as a confirmed-wrong pick
+          for this question are excluded. That contradiction means the
+          server's answer key changed after we cached it; defer to the
+          inner strategy until a new confirmation overrides the old one.
+        - Most-recent row wins on ties, so a later confirmation overrides
+          an earlier one (helps after a server-side answer-key edit
+          flips back).
         """
         with self._connect() as con:
             cur = con.execute(
                 """
-                SELECT correct_option_id_if_known
+                SELECT correct_option_id_if_known, options_json
                 FROM predictions
                 WHERE question_id = ?
                   AND question_text = ?
                   AND correct_option_id_if_known IS NOT NULL
                   AND generated_answer = 0
+                ORDER BY id DESC
                 LIMIT 1
                 """,
                 (question_id, question_text),
             )
             row = cur.fetchone()
-            return None if row is None else int(row[0])
+            if row is None:
+                return None
+            correct_id = int(row[0])
+
+        # Self-contradiction check: if we have also submitted this option
+        # and been told it's wrong, the server-side truth is in flux.
+        if correct_id in self.lookup_failed_options(question_id, question_text):
+            return None
+
+        try:
+            options = json.loads(row[1])
+            text = next(o["text"] for o in options if int(o["id"]) == correct_id)
+        except (json.JSONDecodeError, StopIteration, KeyError, ValueError, TypeError):
+            return None
+        return correct_id, text
 
     def lookup_failed_options(self, question_id: int, question_text: str) -> set[int]:
         """Option ids we previously picked for this question and got back a
-        confirmed wrong outcome for. Used to block the LLM from re-picking
-        a known dead-end."""
+        confirmed wrong outcome for.
+
+        Schema note: the server only reports `correct: bool` -- not which
+        option was the right one. So in our rows, `correct_option_id_if_known`
+        is set only when we picked correctly (then it equals predicted). A
+        NULL value is the unambiguous signal that we submitted and were
+        told wrong. `generated_answer=0` excludes our own offline reasoning."""
         with self._connect() as con:
             cur = con.execute(
                 """
@@ -248,8 +281,7 @@ class QuestionLog:
                 FROM predictions
                 WHERE question_id = ?
                   AND question_text = ?
-                  AND correct_option_id_if_known IS NOT NULL
-                  AND correct_option_id_if_known != predicted_option_id
+                  AND correct_option_id_if_known IS NULL
                   AND generated_answer = 0
                 """,
                 (question_id, question_text),

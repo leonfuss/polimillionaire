@@ -3,6 +3,41 @@
 What we tried, what we learned, why we changed it. Newest first.
 Pairs with git history but reads like notes — the *why*, not the diff.
 
+## 2026-05-14 — DB retrieval: verify cached answer against current options
+
+First live use of the db_retrieval wrapper surfaced two failure modes
+the v1 code couldn't catch: (a) the server can edit a question's answer
+key after we logged it, and (b) option ids are reshuffled between
+sessions without a corresponding text change -- so `option_id=3` in
+session B may carry a different text than `option_id=3` in session A.
+In both cases the v1 wrapper happily returned the stale cached id.
+
+Three changes:
+
+- `lookup_known_correct` now returns `(option_id, option_text)`. The
+  text is pulled from `options_json` of the row that confirmed the
+  answer. Callers verify the live option at that id still has the same
+  text; if not, they remap via text to a possibly-different id
+  (reshuffle), or fall through to the LLM (text gone).
+- Self-contradiction filter: if the cached correct option_id also
+  appears in `lookup_failed_options` for the same question, the
+  server's answer key has flipped since we cached it -- return None
+  from the lookup and let the LLM redecide. The wrapper self-heals
+  after one bad submission.
+- `lookup_failed_options` SQL fix: the schema was modelled around
+  rows where `correct_option_id_if_known != predicted_option_id`,
+  but the server actually only reports `correct: bool` -- so a wrong
+  answer's row has `correct_option_id_if_known IS NULL`, not a
+  different id. The old query was effectively returning the empty
+  set on real production data. The new filter matches what `play.py`
+  actually writes.
+
+Five new/updated tests pin: (option_id, text) return shape, reshuffle
+remap, text-gone fall-through, contradiction filter, and end-to-end
+self-heal after one wrong submission. Existing tests that seeded the
+fictional `correct != predicted` shape have been switched to the real
+`correct=None` shape.
+
 ## 2026-05-14 — DB retrieval wrapper: cache prior server-confirmed answers
 
 Two observations made this worth building. First, after a few live

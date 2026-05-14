@@ -95,13 +95,10 @@ class DbRetrievalStrategy:
         # invalidated before we trust any of its rows.
         if self._index_valid_or_invalidate(question):
             known = self._log.lookup_known_correct(question.id, question.text)
-            if known is not None and any(o.id == known for o in question.options):
-                return self._db_hit_decision(known, start)
-            elif known is not None and self._verbose:
-                print(
-                    f"   [db_retrieval] DB had correct option {known} for q{question.id} "
-                    "but it isn't in the current option set; falling through to LLM"
-                )
+            if known is not None:
+                option_id = self._resolve_cached_option(question, known)
+                if option_id is not None:
+                    return self._db_hit_decision(option_id, start)
 
         failed = (
             self._log.lookup_failed_options(question.id, question.text)
@@ -134,6 +131,41 @@ class DbRetrievalStrategy:
         print(f"   current   : {question.text!r}")
         self._log.set_meta(_META_INDEX_VALID, "0")
         return False
+
+    def _resolve_cached_option(self, question: Question, cached: tuple[int, str]) -> int | None:
+        """Match the cached (id, text) against the current options.
+
+        Three outcomes:
+        - same id still carries the same text -> use it
+        - text moved to a different id (server reshuffled options) -> use
+          the new id, log a verbose note
+        - text is gone entirely (server edited the question or the
+          options) -> fall through to the LLM
+        """
+        cached_id, cached_text = cached
+        same_slot = next((o for o in question.options if o.id == cached_id), None)
+        if same_slot is not None and same_slot.text == cached_text:
+            return cached_id
+
+        # Try a text remap. Reshuffles are common enough to be worth
+        # handling silently-but-loggable; the answer hasn't changed, only
+        # the option_id pointing at it has.
+        remapped = next((o for o in question.options if o.text == cached_text), None)
+        if remapped is not None:
+            if self._verbose:
+                print(
+                    f"   [db_retrieval] options reshuffled for q{question.id}: cached "
+                    f"correct text moved from id {cached_id} -> id {remapped.id}; using new id"
+                )
+            return remapped.id
+
+        if self._verbose:
+            print(
+                f"   [db_retrieval] cached correct text not present in current options "
+                f"for q{question.id} (cached: {cached_text!r}, options: "
+                f"{[o.text for o in question.options]}); falling through to LLM"
+            )
+        return None
 
     def _db_hit_decision(self, option_id: int, start: float) -> AnswerDecision:
         delay = self._rng.uniform(self._sleep_min, self._sleep_max)

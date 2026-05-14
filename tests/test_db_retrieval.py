@@ -79,6 +79,16 @@ class _SlowInner:
         return self._decision
 
 
+# Default options match _q() so a DB-recorded (correct id, text) pair
+# resolves against the live question without needing per-test plumbing.
+_DEFAULT_OPTIONS = [
+    {"id": 0, "text": "3"},
+    {"id": 1, "text": "4"},
+    {"id": 2, "text": "5"},
+    {"id": 3, "text": "22"},
+]
+
+
 def _record(
     log: QuestionLog,
     *,
@@ -86,6 +96,7 @@ def _record(
     text: str,
     predicted: int,
     correct: int | None,
+    options: list[dict] | None = None,
     generated: bool = False,
     session_id: int = 1,
 ) -> None:
@@ -97,7 +108,7 @@ def _record(
             level=1,
             question_id=qid,
             question_text=text,
-            options=[{"id": i, "text": str(i)} for i in range(4)],
+            options=options if options is not None else _DEFAULT_OPTIONS,
             predicted_option_id=predicted,
             correct_option_id_if_known=correct,
             strategy_name="seed",
@@ -130,14 +141,28 @@ def test_lookup_known_correct_ignores_generated_answers(tmp_path: Path) -> None:
     _record(log, qid=42, text="Q", predicted=1, correct=1, generated=True)
     assert log.lookup_known_correct(42, "Q") is None
     _record(log, qid=42, text="Q", predicted=1, correct=1, generated=False)
-    assert log.lookup_known_correct(42, "Q") == 1
+    # Returns (option_id, option_text-at-confirmation-time) so callers can
+    # detect option reshuffles and admin answer-key edits.
+    assert log.lookup_known_correct(42, "Q") == (1, "4")
+
+
+def test_lookup_known_correct_returns_none_on_contradiction(tmp_path: Path) -> None:
+    """If the same option_id has BOTH a confirmed-correct row and a
+    confirmed-wrong row for this question, the server's answer key has
+    changed under us. Defer to the LLM rather than blindly resubmitting."""
+    log = QuestionLog(tmp_path / "q.sqlite")
+    _record(log, qid=10, text="Q", predicted=1, correct=1)  # session A: 1 was right
+    _record(log, qid=10, text="Q", predicted=1, correct=None)  # session B: 1 now wrong
+    assert log.lookup_known_correct(10, "Q") is None
 
 
 def test_lookup_failed_options_excludes_correct_pick(tmp_path: Path) -> None:
+    """The server reports only correct/wrong, so 'wrong' = correct_option_id_if_known
+    is NULL. A row with correct=predicted is a confirmed-right answer and must
+    NOT be in the failed set."""
     log = QuestionLog(tmp_path / "q.sqlite")
-    _record(log, qid=7, text="Q", predicted=2, correct=None)  # unconfirmed; ignored
-    _record(log, qid=7, text="Q", predicted=0, correct=1)  # wrong: 0 is failed
-    _record(log, qid=7, text="Q", predicted=3, correct=1)  # wrong: 3 is failed
+    _record(log, qid=7, text="Q", predicted=0, correct=None)  # wrong: 0 is failed
+    _record(log, qid=7, text="Q", predicted=3, correct=None)  # wrong: 3 is failed
     _record(log, qid=7, text="Q", predicted=1, correct=1)  # right: 1 is NOT failed
     assert log.lookup_failed_options(7, "Q") == {0, 3}
 
@@ -211,7 +236,7 @@ def test_post_invalidation_lookup_failed_options_skipped(tmp_path: Path) -> None
     log_path = tmp_path / "q.sqlite"
     log = QuestionLog(log_path)
     log.set_meta("index_valid", "0")
-    _record(log, qid=1, text="what's 2+2?", predicted=1, correct=2)  # would block 1
+    _record(log, qid=1, text="what's 2+2?", predicted=1, correct=None)  # would block 1
 
     inner = _FixedInner(_decision(option_id=1))  # picks the "blocked" option
     strat = DbRetrievalStrategy(inner, str(log_path), sleeper=lambda _s: None)
@@ -222,13 +247,12 @@ def test_post_invalidation_lookup_failed_options_skipped(tmp_path: Path) -> None
 
 def test_blocks_previously_failed_option_with_random_rewrite(tmp_path: Path) -> None:
     """If the inner picks an option already known to be wrong, rewrite to a
-    random remaining one. We seed failed=[0, 2] with `correct=99` -- a
-    phantom id not in the option set -- so lookup_known_correct returns
-    nothing and the rewrite path is exercised."""
+    random remaining one. Failed rows have `correct=None` (server only
+    reports correct/wrong; we never learn the right id when we're wrong)."""
     log_path = tmp_path / "q.sqlite"
     log = QuestionLog(log_path)
-    _record(log, qid=1, text="what's 2+2?", predicted=0, correct=99)
-    _record(log, qid=1, text="what's 2+2?", predicted=2, correct=99)
+    _record(log, qid=1, text="what's 2+2?", predicted=0, correct=None)
+    _record(log, qid=1, text="what's 2+2?", predicted=2, correct=None)
 
     inner = _FixedInner(_decision(option_id=0))  # known-wrong pick
     strat = DbRetrievalStrategy(inner, str(log_path), sleeper=lambda _s: None, rng=random.Random(1))
@@ -242,7 +266,7 @@ def test_blocks_previously_failed_option_with_random_rewrite(tmp_path: Path) -> 
 def test_timeout_falls_back_to_random_remaining(tmp_path: Path) -> None:
     log_path = tmp_path / "q.sqlite"
     log = QuestionLog(log_path)
-    _record(log, qid=1, text="what's 2+2?", predicted=0, correct=99)  # 0 failed
+    _record(log, qid=1, text="what's 2+2?", predicted=0, correct=None)  # 0 failed
 
     inner = _SlowInner(sleep_s=2.0, decision=_decision(option_id=1))
     strat = DbRetrievalStrategy(
@@ -281,10 +305,13 @@ def test_inner_exception_falls_back_cleanly(tmp_path: Path) -> None:
 
 
 def test_db_hit_filtered_when_option_no_longer_present(tmp_path: Path) -> None:
-    """The DB has option_id 99 as correct, but the current question only has
-    options 0-3. Don't return 99 -- fall through to the inner."""
+    """The DB row's options_json doesn't contain the cached correct id (e.g.
+    schema drift or a logged garbage row). Don't submit a phantom id --
+    fall through to the inner strategy."""
     log_path = tmp_path / "q.sqlite"
     log = QuestionLog(log_path)
+    # predicted=99 correct=99 but options_json is 0..3 -> lookup can't find
+    # text for id 99 and returns None.
     _record(log, qid=1, text="what's 2+2?", predicted=99, correct=99)
 
     inner = _FixedInner(_decision(option_id=2))
@@ -294,14 +321,85 @@ def test_db_hit_filtered_when_option_no_longer_present(tmp_path: Path) -> None:
     assert inner.calls == 1
 
 
+def test_db_hit_remaps_to_new_id_when_options_reshuffled(tmp_path: Path) -> None:
+    """Server reshuffles option ids but keeps texts. We previously confirmed
+    "4" at id=1; current question has "4" at id=2. Submit id=2."""
+    log_path = tmp_path / "q.sqlite"
+    log = QuestionLog(log_path)
+    _record(log, qid=1, text="what's 2+2?", predicted=1, correct=1)  # "4" at id 1
+
+    # current question has the same option texts but in a different order
+    shuffled = Question(
+        id=1,
+        text="what's 2+2?",
+        options=[
+            Option(id=0, text="3"),
+            Option(id=1, text="22"),
+            Option(id=2, text="4"),  # "4" moved from id=1 to id=2
+            Option(id=3, text="5"),
+        ],
+        level=1,
+    )
+
+    inner = _FixedInner(_decision(option_id=0))  # should NOT be called
+    strat = DbRetrievalStrategy(inner, str(log_path), sleeper=lambda _s: None)
+    out = strat(shuffled, _ctx())
+    assert out.option_id == 2  # remapped to the new id carrying "4"
+    assert inner.calls == 0
+
+
+def test_db_hit_falls_through_when_cached_text_gone(tmp_path: Path) -> None:
+    """Server edited the question's options and the previously-correct
+    text is no longer one of the choices. Don't submit blindly -- defer
+    to the inner strategy."""
+    log_path = tmp_path / "q.sqlite"
+    log = QuestionLog(log_path)
+    _record(log, qid=1, text="what's 2+2?", predicted=1, correct=1)  # cached "4"
+
+    edited = Question(
+        id=1,
+        text="what's 2+2?",
+        options=[
+            Option(id=0, text="3"),
+            Option(id=1, text="four"),  # text changed
+            Option(id=2, text="5"),
+            Option(id=3, text="22"),
+        ],
+        level=1,
+    )
+
+    inner = _FixedInner(_decision(option_id=1))
+    strat = DbRetrievalStrategy(inner, str(log_path), sleeper=lambda _s: None)
+    out = strat(edited, _ctx())
+    assert inner.calls == 1
+    assert out.option_id == 1
+
+
+def test_db_hit_self_heals_after_answer_key_edit(tmp_path: Path) -> None:
+    """End-to-end self-correction: session 1 confirmed 1 was right; session
+    2 submitted 1 and was told wrong. The third encounter must not return
+    1 again -- the contradiction should defer to the LLM."""
+    log_path = tmp_path / "q.sqlite"
+    log = QuestionLog(log_path)
+    _record(log, qid=1, text="what's 2+2?", predicted=1, correct=1)  # was right
+    _record(log, qid=1, text="what's 2+2?", predicted=1, correct=None)  # now wrong
+
+    inner = _FixedInner(_decision(option_id=2))
+    strat = DbRetrievalStrategy(inner, str(log_path), sleeper=lambda _s: None)
+    out = strat(_q(), _ctx())
+    # falls through to inner; option 1 is also in failed_options so the
+    # wrapper wouldn't have re-submitted it via the avoidance path either
+    assert inner.calls == 1
+    assert out.option_id == 2
+
+
 def test_all_options_failed_returns_first_option(tmp_path: Path) -> None:
     """Pathological case: every option has a confirmed-wrong record. We still
     have to send something; defaulting to option 0 is the recorded behaviour."""
     log_path = tmp_path / "q.sqlite"
     log = QuestionLog(log_path)
     for oid in (0, 1, 2, 3):
-        # use a phantom 'correct' so these don't also count as known-correct
-        _record(log, qid=1, text="what's 2+2?", predicted=oid, correct=99)
+        _record(log, qid=1, text="what's 2+2?", predicted=oid, correct=None)
 
     inner = _FixedInner(_decision(option_id=2))
     strat = DbRetrievalStrategy(inner, str(log_path), sleeper=lambda _s: None)
