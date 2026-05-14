@@ -53,6 +53,16 @@ CREATE TABLE IF NOT EXISTS predictions (
 CREATE INDEX IF NOT EXISTS idx_predictions_question_id ON predictions(question_id);
 CREATE INDEX IF NOT EXISTS idx_predictions_competition ON predictions(competition_id);
 CREATE INDEX IF NOT EXISTS idx_predictions_timestamp   ON predictions(timestamp);
+
+-- Key/value side-table for index-wide flags. The only consumer today is
+-- the `index_valid` sentinel: db_retrieval flips it to "0" the first time
+-- it sees a (question_id, question_text) collision, on the assumption
+-- that the server rebuilt its question pool and the old id ↔ answer
+-- mapping no longer holds.
+CREATE TABLE IF NOT EXISTS meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 """
 
 
@@ -148,3 +158,100 @@ class QuestionLog:
                 (question_id,),
             )
             return cur.fetchone() is not None
+
+    # ----- meta key/value (used by db_retrieval for the index_valid flag) -----
+
+    def get_meta(self, key: str) -> str | None:
+        with self._connect() as con:
+            cur = con.execute("SELECT value FROM meta WHERE key = ?", (key,))
+            row = cur.fetchone()
+            return None if row is None else row[0]
+
+    def set_meta(self, key: str, value: str) -> None:
+        with self._connect() as con:
+            con.execute(
+                "INSERT INTO meta(key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (key, value),
+            )
+
+    # ----- read helpers for db_retrieval strategy -----
+
+    def lookup_text_for_id(self, question_id: int) -> str | None:
+        """Return any logged text for this id, or None if we've never seen it.
+
+        Multiple rows can share an id (we record per prediction event, not
+        per question) but all should agree on the text -- text drift is the
+        signal we want for `find_text_mismatch`.
+        """
+        with self._connect() as con:
+            cur = con.execute(
+                "SELECT question_text FROM predictions WHERE question_id = ? LIMIT 1",
+                (question_id,),
+            )
+            row = cur.fetchone()
+            return None if row is None else row[0]
+
+    def find_text_mismatch(self, question_id: int, question_text: str) -> str | None:
+        """If any logged row for `question_id` has a different `question_text`,
+        return that prior text. Otherwise None.
+
+        Trivial whitespace-only differences are normalised away -- the server
+        sometimes round-trips through stores that collapse spaces.
+        """
+
+        def _norm(s: str) -> str:
+            return " ".join(s.split()).strip()
+
+        target = _norm(question_text)
+        with self._connect() as con:
+            cur = con.execute(
+                "SELECT DISTINCT question_text FROM predictions WHERE question_id = ?",
+                (question_id,),
+            )
+            for (prior,) in cur.fetchall():
+                if _norm(prior) != target:
+                    return prior
+        return None
+
+    def lookup_known_correct(self, question_id: int, question_text: str) -> int | None:
+        """Return a server-confirmed correct option_id for this question, or None.
+
+        Filters out `generated_answer=1` rows (our own reasoning, not server
+        truth) and requires the logged text to match exactly so we don't
+        cross-contaminate after a drift event.
+        """
+        with self._connect() as con:
+            cur = con.execute(
+                """
+                SELECT correct_option_id_if_known
+                FROM predictions
+                WHERE question_id = ?
+                  AND question_text = ?
+                  AND correct_option_id_if_known IS NOT NULL
+                  AND generated_answer = 0
+                LIMIT 1
+                """,
+                (question_id, question_text),
+            )
+            row = cur.fetchone()
+            return None if row is None else int(row[0])
+
+    def lookup_failed_options(self, question_id: int, question_text: str) -> set[int]:
+        """Option ids we previously picked for this question and got back a
+        confirmed wrong outcome for. Used to block the LLM from re-picking
+        a known dead-end."""
+        with self._connect() as con:
+            cur = con.execute(
+                """
+                SELECT DISTINCT predicted_option_id
+                FROM predictions
+                WHERE question_id = ?
+                  AND question_text = ?
+                  AND correct_option_id_if_known IS NOT NULL
+                  AND correct_option_id_if_known != predicted_option_id
+                  AND generated_answer = 0
+                """,
+                (question_id, question_text),
+            )
+            return {int(r[0]) for r in cur.fetchall()}

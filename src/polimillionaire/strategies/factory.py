@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import os
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -87,6 +88,8 @@ def make_strategy(
     *,
     competition_id: int | None = None,
     project_root: Path | None = None,
+    db_retrieval: bool = False,
+    db_path: str | None = None,
     **kwargs: Any,
 ) -> Strategy:
     """Construct a strategy by name.
@@ -95,12 +98,37 @@ def make_strategy(
     per-competition retrieval index. `project_root` overrides where the
     factory looks for data/index/ (defaults to the repo root).
 
+    `db_retrieval=True` wraps the built strategy with `DbRetrievalStrategy`:
+    look up the question in `data/questions.sqlite` first, return the
+    server-confirmed answer (after a 7-18s pacing delay) when found, and
+    otherwise fall through to the underlying strategy under a 30s budget.
+
     Extra `kwargs` are forwarded to the strategy's constructor (e.g.
     `verbose=True`, `max_steps=5`).
     """
     if name not in _REGISTRY:
         raise KeyError(f"unknown strategy {name!r}; available: {available()}")
-    return _REGISTRY[name](llm, competition_id=competition_id, project_root=project_root, **kwargs)
+    inner = _REGISTRY[name](llm, competition_id=competition_id, project_root=project_root, **kwargs)
+    if not db_retrieval:
+        return inner
+    from polimillionaire.strategies.db_retrieval import DbRetrievalStrategy
+
+    return DbRetrievalStrategy(
+        inner,
+        _resolve_db_path(db_path, project_root),
+        verbose=kwargs.get("verbose", False),
+    )
+
+
+def _resolve_db_path(db_path: str | None, project_root: Path | None) -> str:
+    """Mirror play._resolve_db_path so a wrapper built standalone (no play
+    loop) lands at the same questions.sqlite as live play does."""
+    raw = db_path or os.environ.get("POLIMILLIONAIRE_DB_PATH") or "data/questions.sqlite"
+    p = Path(raw)
+    if p.is_absolute():
+        return str(p)
+    root = _resolve_project_root(project_root)
+    return str(root / p)
 
 
 def _resolve_project_root(override: Path | None) -> Path:

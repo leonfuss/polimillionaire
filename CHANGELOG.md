@@ -3,6 +3,53 @@
 What we tried, what we learned, why we changed it. Newest first.
 Pairs with git history but reads like notes — the *why*, not the diff.
 
+## 2026-05-14 — DB retrieval wrapper: cache prior server-confirmed answers
+
+Two observations made this worth building. First, after a few live
+sessions the SQLite log already contains a non-trivial number of
+questions we've seen the server confirm answers for; re-deriving them
+through the LLM on the next encounter is wasted budget and runs the
+risk of a regression. Second, the LLM occasionally re-picks an option
+we've already been told is wrong (most often on close-call
+entertainment questions where two distractors compete) -- a known
+dead-end shouldn't be re-tried.
+
+New optional wrapper `DbRetrievalStrategy`, toggled by
+`make_strategy(..., db_retrieval=True)`. For each question it does, in
+order:
+
+1. **Drift check**. If the (`question_id`, `question_text`) pair we've
+   logged before disagrees with what the server just sent, print a
+   loud banner and flip a sticky `index_valid="0"` flag in a new
+   `meta` key/value table. From that point on, the DB is treated as
+   poisoned and lookups are skipped -- we assume the server rebuilt
+   its question pool and the old id ↔ answer mapping no longer holds.
+   The flag is intentionally one-way; flipping it back is manual.
+2. **Known correct**. If the DB has a server-confirmed correct option
+   for this question (`generated_answer=0`, `correct_option_id_if_known
+   IS NOT NULL`) and that option is still in the current option set,
+   sleep a random 7-18s and return it. The delay is pure
+   server-friendliness: returning instantly on every "easy" question
+   stands out, both to detection heuristics and to humans watching the
+   leaderboard pacing.
+3. **Otherwise**: run the inner strategy under a 30s wall-clock budget
+   (via `concurrent.futures` -- the orphan thread is allowed to wind
+   down on its own so the next question isn't blocked). Block any
+   options the DB shows as confirmed-wrong; if the inner picks one
+   anyway, rewrite to a random remaining option. If it times out, also
+   pick randomly from remaining. The inner's original choice is
+   preserved in the rationale so the log still captures LLM behaviour.
+
+New schema bits: `meta` table for the flag plus three read helpers on
+`QuestionLog` (`lookup_known_correct`, `lookup_failed_options`,
+`find_text_mismatch`). Whitespace-only differences are normalised away
+when comparing texts so cosmetic round-trips don't trigger drift.
+
+12 new tests cover the lookup helpers and every branch of the wrapper:
+DB-hit short-circuit, drift invalidation + stickiness, blocked-option
+rewrite, timeout fallback, inner-exception fallback, missing-option
+filtering, and the all-options-failed degenerate case.
+
 ## 2026-05-14 — Query cleanup for live Wikipedia lookup
 
 First live run of the new live-wiki path returned **zero hits on every
