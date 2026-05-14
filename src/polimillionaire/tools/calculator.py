@@ -89,12 +89,24 @@ def _stat_range(*args: Any) -> sympy.Expr:
     )
 
 
+def _normal_cdf(mu: Any, sigma: Any, x: Any) -> sympy.Expr:
+    """P(X <= x) for X ~ Normal(mu, sigma). Curries sympy.stats.cdf so the
+    model can write `normal_cdf(mu, sigma, x)` rather than the two-step
+    `cdf(Normal('X', mu, sigma))(x)` form, which it never gets right in
+    one shot."""
+    from sympy.stats import Normal, cdf
+
+    X = Normal("_X", sympy.sympify(mu), sympy.sympify(sigma))
+    return cdf(X)(sympy.sympify(x))
+
+
 STATS_LOCALS: dict[str, Any] = {
     "mean": _stat_mean,
     "median": _stat_median,
     "stdev": _stat_stdev,
     "variance": _stat_variance,
     "range_of": _stat_range,
+    "normal_cdf": _normal_cdf,
 }
 
 
