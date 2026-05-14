@@ -9,7 +9,7 @@ ASR transcripts in the text fields.
 from __future__ import annotations
 
 from polimillionaire._vendor.millionaire_client.models import Option, Question
-from polimillionaire.play import _speech_question_builder
+from polimillionaire.play import _speech_question_builder, _strip_option_prefix
 
 
 class _MockTranscriber:
@@ -98,3 +98,67 @@ def test_speech_builder_returns_none_when_no_question_available():
     assert build(game, level=1) is None
     assert game.fetch_log == []  # no audio fetched
     assert transcriber.calls == []
+
+
+# ---- _strip_option_prefix -------------------------------------------------
+
+
+def test_strip_option_prefix_handles_period_separator():
+    """Whisper output for `<TTS reads> Option A. Two.` clip."""
+    assert _strip_option_prefix("Option A. Two.") == "Two."
+
+
+def test_strip_option_prefix_handles_comma_separator():
+    """Some clips come back with a comma: `Option B, three.`"""
+    assert _strip_option_prefix("Option B, three.") == "three."
+
+
+def test_strip_option_prefix_handles_trailing_ellipsis():
+    """Whisper sometimes tacks on `...` when the clip ends abruptly."""
+    assert _strip_option_prefix("Option C. One...") == "One..."
+
+
+def test_strip_option_prefix_is_case_insensitive():
+    assert _strip_option_prefix("OPTION D - four") == "four"
+    assert _strip_option_prefix("option a: paris") == "paris"
+
+
+def test_strip_option_prefix_no_op_when_no_prefix():
+    """The question audio has no `Option X` prefix; the stripper must be
+    a no-op for those (and for any option transcript Whisper missed the
+    spoken letter on)."""
+    assert (
+        _strip_option_prefix("What is the capital of France?") == "What is the capital of France?"
+    )
+    assert _strip_option_prefix("Paris") == "Paris"
+
+
+def test_strip_option_prefix_only_strips_first_occurrence():
+    """If 'Option' appears inside the answer (unlikely but possible), the
+    stripper must not eat it -- only the leading announcement matters."""
+    assert _strip_option_prefix("Option A. The third option") == "The third option"
+
+
+def test_speech_builder_applies_option_prefix_strip():
+    """End-to-end: option clips transcribed with the TTS prefix come out
+    of the builder with the prefix removed; question clip is left as-is."""
+    q_wav = b"<wav-q>"
+    option_wavs = [b"<wav-a>", b"<wav-b>", b"<wav-c>", b"<wav-d>"]
+    transcripts = {
+        q_wav: "What is the capital of France?",  # questions: no prefix
+        option_wavs[0]: "Option A. London",
+        option_wavs[1]: "Option B, Paris",
+        option_wavs[2]: "Option C. Rome",
+        option_wavs[3]: "Option D - Berlin",
+    }
+    transcriber = _MockTranscriber(transcripts)
+    game = _MockGameSession(qid=42, level=1, q_wav=q_wav, option_wavs=option_wavs)
+
+    build = _speech_question_builder(transcriber, verbose=False)
+    q = build(game, level=1)
+
+    assert q is not None
+    # Question text untouched (no prefix to strip).
+    assert q.text == "What is the capital of France?"
+    # Option texts have the spoken-letter prefix stripped.
+    assert [o.text for o in q.options] == ["London", "Paris", "Rome", "Berlin"]

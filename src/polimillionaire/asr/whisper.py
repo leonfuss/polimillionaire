@@ -121,6 +121,12 @@ class WhisperTranscriber:
         dtype = torch.float16 if self.device.startswith("cuda") else torch.float32
         self._processor = WhisperProcessor.from_pretrained(self.name)
         model = WhisperForConditionalGeneration.from_pretrained(self.name, torch_dtype=dtype)
+        # whisper-large-v3-turbo ships generation_config.max_length=448, which
+        # collides with our max_new_tokens=256 and prints a verbose
+        # "both set, max_new_tokens will take precedence" warning on every
+        # transcribe() call (5x per question in speech mode). Clear it so
+        # only our bound applies.
+        model.generation_config.max_length = None
         model.to(self.device)
         model.eval()
         self._model = model

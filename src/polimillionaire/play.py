@@ -16,6 +16,7 @@ the last possible moment.
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -263,6 +264,27 @@ def auto_play_loop(
     return summary
 
 
+# The server's TTS reads "Option A.", "Option B,", etc. at the start of
+# each option clip, and Whisper transcribes that literally. Leaving the
+# prefix in the option text confuses the strategy ("Option A. Two." vs
+# the cached "Two" -- the cross-mode DB fuzzy matcher gets ~0.4 ratio
+# instead of an exact hit) and bloats the prompt. The question clip has
+# no such prefix, so we strip only on option transcripts.
+# Match the letter, then any run of whitespace / punctuation up to the
+# first content character. Covers the four forms Whisper emits in practice:
+# "Option A. Two.", "Option B, three.", "Option C. One...", "Option D - four".
+_OPTION_PREFIX_RE = re.compile(
+    r"^\s*option\s+[a-d](?:[\s.,:\-]+|$)",
+    re.IGNORECASE,
+)
+
+
+def _strip_option_prefix(text: str) -> str:
+    """Drop the spoken option-letter announcement at the start of an option
+    transcript. No-op when the prefix isn't present."""
+    return _OPTION_PREFIX_RE.sub("", text, count=1).strip()
+
+
 def _speech_question_builder(
     transcriber: WhisperTranscriber, *, verbose: bool = True
 ) -> QuestionBuilder:
@@ -294,7 +316,7 @@ def _speech_question_builder(
             if verbose:
                 print(f"  level {level}: fetching option {letter} audio...", end="", flush=True)
             wav_o = game.fetch_audio_option_next()
-            text_o = transcriber.transcribe(wav_o)
+            text_o = _strip_option_prefix(transcriber.transcribe(wav_o))
             if verbose:
                 print(f" {len(wav_o)} B -> {text_o!r}")
             option_texts.append(text_o)
