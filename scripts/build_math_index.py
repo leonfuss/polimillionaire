@@ -38,14 +38,29 @@ from polimillionaire.retrieval.embedder import DEFAULT_MODEL, Embedder
 # scripts/ -> repo root
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
-# Tried in order; first one that loads wins. Lighteval's mirror tends to
-# be the most reliably available; the original Hendrycks repo has had
-# intermittent access issues over the project's lifetime.
+# Tried in order; first one that loads wins. The original `hendrycks/`
+# and `lighteval/` mirrors were taken down / gated in early 2026, so the
+# community mirrors below are the working options. `EleutherAI/hendrycks_math`
+# is the only one with subject configs (handled specially below); the rest
+# are flat single-config datasets with the same {problem, solution, type,
+# level} columns.
 DATASET_CANDIDATES: list[str] = [
+    "nlile/hendrycks-MATH-benchmark",
+    "qwedsacf/competition_math",
+    "EleutherAI/hendrycks_math",
     "lighteval/MATH",
     "hendrycks/competition_math",
-    "qwedsacf/competition_math",
 ]
+# Subject configs for the EleutherAI mirror -- it has no default split.
+_ELEUTHERAI_CONFIGS = (
+    "algebra",
+    "counting_and_probability",
+    "geometry",
+    "intermediate_algebra",
+    "number_theory",
+    "prealgebra",
+    "precalculus",
+)
 MODEL_NAME = DEFAULT_MODEL  # bge-small-en-v1.5 (~50 MB, 384 dim)
 OUT_DIR = _PROJECT_ROOT / "data" / "index" / "math"
 BATCH_SIZE = 64
@@ -58,12 +73,25 @@ WIKI_BODIES_FILE = "_wiki_bodies.jsonl"
 
 
 def _load_math_dataset():
+    """Return (dataset_name, {split_name: iterable_of_examples}).
+
+    Returns plain dicts (not a DatasetDict) so the EleutherAI path -- which
+    has to stitch together 7 per-subject configs -- looks the same to the
+    caller as the flat mirrors.
+    """
     from datasets import load_dataset
 
     last_err: Exception | None = None
     for name in DATASET_CANDIDATES:
         try:
             print(f"loading dataset {name}...")
+            if name == "EleutherAI/hendrycks_math":
+                splits: dict[str, list[dict]] = {}
+                for cfg in _ELEUTHERAI_CONFIGS:
+                    ds = load_dataset(name, cfg)
+                    for split_name, split in ds.items():
+                        splits.setdefault(split_name, []).extend(split)
+                return name, splits
             return name, load_dataset(name)
         except Exception as e:  # noqa: BLE001 -- fall through to next mirror
             last_err = e
@@ -84,6 +112,9 @@ def _load_math_problem_rows() -> tuple[str | None, list[dict]]:
             solution = ex.get("solution", "")
             if not problem:
                 continue
+            # Mirrors disagree on the subject column name: the original
+            # Hendrycks layout uses `type`, while nlile's mirror uses `subject`.
+            subject = ex.get("type") or ex.get("subject") or "unknown"
             rows.append(
                 {
                     "id": f"{split_name}/{i}",
@@ -91,7 +122,7 @@ def _load_math_problem_rows() -> tuple[str | None, list[dict]]:
                     "metadata": {
                         "source": "math_problems",
                         "split": split_name,
-                        "subject": ex.get("type", "unknown"),
+                        "subject": subject,
                         "level": ex.get("level", "unknown"),
                         "solution": solution,
                     },

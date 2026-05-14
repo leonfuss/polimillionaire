@@ -18,17 +18,27 @@ def _get_with_retry(
     params: dict,
     *,
     timeout: float = 30,
-    max_attempts: int = 4,
+    max_attempts: int = 8,
+    max_wait: float = 60.0,
 ) -> requests.Response:
     """GET with exponential backoff on transient errors. Crawls are long; a single
-    429/503 should not kill the run."""
+    429/503 should not kill the run.
+
+    Wikipedia returns a `Retry-After` header on 429s -- we honour it when present
+    (capped at `max_wait`) and otherwise fall back to 2**attempt with the same
+    cap. From a Kaggle egress IP the limit kicks in fast, so the previous 4-attempt
+    8s ceiling was nowhere near enough.
+    """
     last_exc: Exception | None = None
     for attempt in range(max_attempts):
         try:
             resp = session.get(url, params=params, timeout=timeout)
             if resp.status_code in _RETRY_STATUSES and attempt < max_attempts - 1:
-                wait = 2**attempt
-                print(f"wiki_crawler: {resp.status_code} from API, retrying in {wait}s")
+                wait = _retry_wait(resp, attempt, max_wait)
+                print(
+                    f"wiki_crawler: {resp.status_code} from API, retrying in {wait:.1f}s "
+                    f"(attempt {attempt + 1}/{max_attempts})"
+                )
                 time.sleep(wait)
                 continue
             resp.raise_for_status()
@@ -36,13 +46,24 @@ def _get_with_retry(
         except requests.RequestException as e:
             last_exc = e
             if attempt < max_attempts - 1:
-                wait = 2**attempt
-                print(f"wiki_crawler: {type(e).__name__}, retrying in {wait}s")
+                wait = min(2**attempt, max_wait)
+                print(f"wiki_crawler: {type(e).__name__}, retrying in {wait:.1f}s")
                 time.sleep(wait)
                 continue
             raise
     # mypy: every path either returns or raises, but the loop boundary needs this
     raise RuntimeError(f"unreachable: get_with_retry exhausted attempts: {last_exc}")
+
+
+def _retry_wait(resp: requests.Response, attempt: int, max_wait: float) -> float:
+    """Prefer the server's `Retry-After` hint; fall back to exponential backoff."""
+    hint = resp.headers.get("Retry-After")
+    if hint:
+        try:
+            return min(float(hint), max_wait)
+        except ValueError:
+            pass  # HTTP-date form -- not worth parsing, fall through
+    return min(2**attempt, max_wait)
 
 
 def enumerate_category_titles(
@@ -52,7 +73,7 @@ def enumerate_category_titles(
     max_titles: int | None = None,
     api_url: str = "https://en.wikipedia.org/w/api.php",
     user_agent: str = _DEFAULT_UA,
-    request_delay: float = 0.02,
+    request_delay: float = 0.1,
 ) -> set[str]:
     """BFS-style category walk; returns the unique set of page (mainspace) titles."""
     ua = os.environ.get("WIKI_USER_AGENT", user_agent)
