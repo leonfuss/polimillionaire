@@ -355,8 +355,10 @@ def _build_wiki_rag(
 # Per-competition wiki_rag tuning. Entertainment's 794k-passage corpus is ~4x
 # the size of history and ~2x science -- the relevant doc is more likely to be
 # outside the default nprobe=32 / top-50 candidate window, so widen for it.
-# `live_lookup` enables per-question Wikipedia API fusion: on for the two
-# drifting categories (entertainment, science), off for history (stable).
+# `live_lookup` enables per-question Wikipedia API fusion. On by default for
+# all three wiki categories now -- the rerank pool dedups by title so live
+# never displaces a strong static hit, and the worst case is a few hundred ms
+# of extra latency on a single API call.
 # Override on a per-call basis by passing kwargs to make_strategy("auto", ...).
 _AUTO_WIKI_DEFAULTS: dict[int, dict[str, Any]] = {
     0: {
@@ -367,7 +369,7 @@ _AUTO_WIKI_DEFAULTS: dict[int, dict[str, Any]] = {
         "top_k": 8,
         "live_lookup": True,
     },
-    1: {},  # history -- defaults work well, ~83% in replay
+    1: {"live_lookup": True},  # history -- defaults work but live catches edge cases
     2: {"live_lookup": True},  # science -- live picks up post-crawl discoveries
 }
 
