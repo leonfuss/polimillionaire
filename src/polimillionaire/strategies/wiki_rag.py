@@ -118,9 +118,14 @@ class WikiRagStrategy:
             # long tail (recent films, obscure scientists). Dedup by article
             # title against the static fused list so the reranker doesn't
             # see the same article twice.
+            #
+            # MediaWiki's search is keyword-based -- piping the four
+            # option strings into the same query just adds distractor
+            # tokens and routinely returns zero hits. Use the question
+            # text alone; LiveWikiRetriever handles stop-word stripping.
             live_passages: list = []
             if self._live is not None and self._live_k > 0:
-                live_passages = self._live.search(query, k=self._live_k)
+                live_passages = self._live.search(question.text, k=self._live_k)
                 if live_passages:
                     static_titles = {
                         p.metadata.get("title", "").lower()

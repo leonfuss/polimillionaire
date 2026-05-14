@@ -19,6 +19,7 @@ index will carry the question.
 from __future__ import annotations
 
 import os
+import re
 from typing import TYPE_CHECKING
 
 import requests
@@ -29,6 +30,102 @@ if TYPE_CHECKING:
     from polimillionaire.retrieval.retriever import Passage
 
 _API_URL = "https://en.wikipedia.org/w/api.php"
+
+# CirrusSearch (Wikipedia's backend) is keyword/TF-IDF, not NL.
+# A literal question like "What is the primary theme of The Babadook?"
+# returns ZERO hits, while "Babadook" returns the article. Strip the
+# interrogative scaffolding before hitting the API.
+_QUERY_STOP_WORDS = frozenset(
+    {
+        # interrogatives
+        "what",
+        "which",
+        "who",
+        "whom",
+        "when",
+        "where",
+        "why",
+        "how",
+        # copulas / auxiliaries
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "being",
+        "do",
+        "does",
+        "did",
+        "has",
+        "have",
+        "had",
+        # articles / determiners
+        "the",
+        "a",
+        "an",
+        "this",
+        "that",
+        "these",
+        "those",
+        # prepositions + conjunctions (small, frequent set)
+        "of",
+        "in",
+        "on",
+        "for",
+        "to",
+        "with",
+        "by",
+        "at",
+        "from",
+        "as",
+        "into",
+        "and",
+        "or",
+        "but",
+        # millionaire-style question scaffolding -- seen in entertainment
+        # questions, always pure filler:
+        "primary",
+        "primarily",
+        "fundamental",
+        "principal",
+        "main",
+        "term",
+        "describes",
+        "described",
+        "explored",
+        "explores",
+        "principle",
+        "process",
+        "purpose",
+        "theme",
+        "themes",
+        "context",
+        "used",
+        "uses",
+        "characterized",
+        "considered",
+        "known",
+        "called",
+        "named",
+        "type",
+        "kind",
+    }
+)
+# Word tokens including apostrophes (Angel's, Rick's) and unicode letters
+# (Café Américain). Excludes question marks, pipes, and other noise.
+_TOKEN_RE = re.compile(r"[\w']+", re.UNICODE)
+
+
+def _clean_query(raw: str) -> str:
+    """Trim a question into a keyword-search-friendly form.
+
+    Returns the raw query unchanged if filtering would leave nothing --
+    a short query like "Inception" is already optimal.
+    """
+    tokens = _TOKEN_RE.findall(raw)
+    kept = [t for t in tokens if t.lower() not in _QUERY_STOP_WORDS]
+    return " ".join(kept) if kept else raw
 
 
 class LiveWikiRetriever:
@@ -67,12 +164,16 @@ class LiveWikiRetriever:
                 print(f"   [live_wiki] cache hit: {len(hits)} passage(s) for query")
             return hits
 
+        cleaned = _clean_query(query)
         if self._verbose:
-            shown = query if len(query) <= 80 else query[:77] + "..."
+            shown = cleaned if len(cleaned) <= 80 else cleaned[:77] + "..."
             print(f'   [live_wiki] searching: "{shown}" (top {k})')
+            if cleaned != query.strip():
+                raw_shown = query if len(query) <= 80 else query[:77] + "..."
+                print(f'   [live_wiki] cleaned from: "{raw_shown}"')
 
         try:
-            titles = self._search_titles(query, k)
+            titles = self._search_titles(cleaned, k)
         except Exception as e:  # noqa: BLE001 -- never break play on retrieval
             print(f"   [live_wiki] search failed ({type(e).__name__}: {e}); returning []")
             return []

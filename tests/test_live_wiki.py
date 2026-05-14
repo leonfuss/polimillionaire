@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import patch
 
-from polimillionaire.retrieval.live_wiki import LiveWikiRetriever
+from polimillionaire.retrieval.live_wiki import LiveWikiRetriever, _clean_query
 
 
 class _FakeResponse:
@@ -137,6 +137,63 @@ def test_search_returns_empty_when_api_finds_nothing() -> None:
     with _patch_get([{"query": {"search": []}}]):
         out = retr.search("zzzzz no such article")
     assert out == []
+
+
+def test_clean_query_strips_interrogative_scaffolding() -> None:
+    """CirrusSearch chokes on long natural-language questions; the cleaner
+    must drop question words and filler so only content tokens reach the API."""
+    cleaned = _clean_query("What is the primary theme explored in The Babadook?")
+    assert cleaned == "Babadook"
+
+    cleaned = _clean_query(
+        "What is the fundamental principle of Jurassic Park's dinosaur cloning process?"
+    )
+    assert "Jurassic" in cleaned
+    assert "Park's" in cleaned
+    assert "cloning" in cleaned
+    # all of these should have been stripped
+    for stop in ("What", "is", "the", "fundamental", "principle", "of", "process"):
+        assert stop not in cleaned.split()
+
+
+def test_clean_query_preserves_entity_apostrophes() -> None:
+    """Token regex must keep `Angel's` / `Rick's` as one token -- splitting
+    them would lose the entity in the search index."""
+    cleaned = _clean_query("What term describes Rick Blaine's nightclub in Casablanca?")
+    assert "Rick" in cleaned.split()
+    assert "Blaine's" in cleaned.split()
+    assert "Casablanca" in cleaned.split()
+
+
+def test_clean_query_falls_back_to_raw_when_only_stop_words() -> None:
+    """If the entire query is stop words (unlikely but possible), the
+    cleaner returns the raw input so the API call still has something."""
+    # All tokens here are in the stop-word set
+    raw = "What is the of"
+    cleaned = _clean_query(raw)
+    assert cleaned == raw
+
+
+def test_search_uses_cleaned_query_for_api_call() -> None:
+    """End-to-end: the API must receive the cleaned query, not the raw."""
+    captured: dict = {}
+
+    def stub(_session, _url, params, **_kw):
+        captured.setdefault("calls", []).append(params)
+        # Return search payload then extracts payload depending on call index
+        if params.get("list") == "search":
+            return _FakeResponse({"query": {"search": [{"title": "Babadook"}]}})
+        return _FakeResponse({"query": {"pages": _stub_pages(("Babadook", "body"))}})
+
+    retr = LiveWikiRetriever()
+    with patch("polimillionaire.retrieval.live_wiki._get_with_retry", side_effect=stub):
+        retr.search("What is the primary theme explored in The Babadook?")
+
+    search_call = next(c for c in captured["calls"] if c.get("list") == "search")
+    # `srsearch` must contain the entity but not the question scaffolding.
+    assert "Babadook" in search_call["srsearch"]
+    assert "What" not in search_call["srsearch"]
+    assert "primary" not in search_call["srsearch"]
 
 
 def test_char_cap_truncates_long_extracts() -> None:

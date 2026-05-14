@@ -3,6 +3,31 @@
 What we tried, what we learned, why we changed it. Newest first.
 Pairs with git history but reads like notes — the *why*, not the diff.
 
+## 2026-05-14 — Query cleanup for live Wikipedia lookup
+
+First live run of the new live-wiki path returned **zero hits on every
+entertainment question**. Tested the actual MediaWiki API: CirrusSearch
+is keyword/TF-IDF, not natural-language. A question like "What is the
+primary theme explored in The Babadook?" returns `[]`, while
+"Babadook" returns the article. The pipe-joined `question | opt1 | opt2
+| opt3 | opt4` query the strategy was sending compounded the noise --
+options pull the search toward four unrelated topics simultaneously.
+
+Two-part fix:
+- `LiveWikiRetriever` now strips question words ("what/is/the/...") and
+  millionaire-style filler ("primary/theme/principle/term/...") before
+  hitting the API. Entity/proper-noun tokens survive; apostrophes are
+  preserved (`Angel's` stays one token). Falls back to the raw query
+  when filtering would empty it.
+- `WikiRagStrategy` now passes `question.text` to live lookup, not the
+  pipe-joined option string. The static dense+sparse retrievers still
+  get the rich query (they handle NL fine); only the keyword-search API
+  sees the trimmed form.
+
+Verified against the four failing questions from the live run --
+Jurassic Park, A Cruel Angel's Thesis, Casablanca, The Babadook -- all
+now return the correct article(s) in the top 3.
+
 ## 2026-05-14 — Live Wikipedia lookup for entertainment + science wiki_rag
 
 Entertainment and science are the two non-math categories where the static
