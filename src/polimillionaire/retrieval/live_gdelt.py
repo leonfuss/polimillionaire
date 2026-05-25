@@ -6,7 +6,7 @@ GDELT indexes the global news firehose in near-real-time with no API
 key required, which makes it the right primitive for the News
 competition (cid 5).
 
-Public surface mirrors `LiveWikiRetriever.search(query, k) -> list[Passage]`
+Public surface mirrors `LiveWikiRetriever.search(query, k, *, option_texts)`
 so the strategy is source-agnostic -- only the factory picks which one
 to use per competition.
 
@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import os
 import re
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
 import requests
@@ -30,67 +31,99 @@ if TYPE_CHECKING:
 
 _API_URL = "https://api.gdeltproject.org/api/v2/doc/doc"
 
-# GDELT is keyword/Boolean; question scaffolding hurts recall the same
-# way it does on MediaWiki. Reuse a small, news-flavoured stop set --
-# narrower than live_wiki's (no trivia-specific scaffolding like
-# "primary"/"theme" which can appear meaningfully in news headlines).
+# Stop set has three buckets:
+#  - generic interrogatives / copulas / determiners (same as live_wiki)
+#  - news-prompt scaffolding ("according to the article published on ...")
+#    which is pure filler in every quiz question we saw
+#  - calendar words that collapse to noise after date stripping
 _QUERY_STOP_WORDS = frozenset(
     {
-        "what",
-        "which",
-        "who",
-        "whom",
-        "when",
-        "where",
-        "why",
-        "how",
-        "is",
-        "are",
-        "was",
-        "were",
-        "be",
-        "been",
-        "being",
-        "do",
-        "does",
-        "did",
-        "has",
-        "have",
-        "had",
-        "the",
-        "a",
-        "an",
-        "this",
-        "that",
-        "these",
-        "those",
-        "of",
-        "in",
-        "on",
-        "for",
-        "to",
-        "with",
-        "by",
-        "at",
-        "from",
-        "as",
-        "into",
-        "and",
-        "or",
-        "but",
+        # interrogatives
+        "what", "which", "who", "whom", "when", "where", "why", "how",
+        # copulas / auxiliaries
+        "is", "are", "was", "were", "be", "been", "being",
+        "do", "does", "did", "has", "have", "had",
+        # articles / determiners
+        "the", "a", "an", "this", "that", "these", "those",
+        # prepositions + conjunctions
+        "of", "in", "on", "for", "to", "with", "by", "at", "from", "as", "into",
+        "and", "or", "but",
+        # news prompt scaffolding -- always filler in the quiz set
+        "according", "article", "articles", "news", "published",
+        "report", "reports", "reported", "reporting",
+        "story", "stories", "stated", "states",
+        # calendar words
+        "day", "days", "today", "yesterday", "tomorrow",
+        "month", "year", "same",
     }
-)
+)  # fmt: skip
 _TOKEN_RE = re.compile(r"[\w']+", re.UNICODE)
+
+# YYYY-MM-DD anywhere in the question body. The quiz consistently anchors
+# questions to a publication date in this format; capturing it gives us a
+# free narrow time filter for GDELT.
+_DATE_RE = re.compile(r"\b(20\d{2})-(\d{2})-(\d{2})\b")
+# Year-like tokens (2000-2099) and short numerics (1-2 digit) leak in
+# from "2026 05 18" once the tokenizer breaks the hyphenated date apart.
+# Strip them so they don't pad the keyword vector.
+_DATE_NUM_RE = re.compile(r"^(?:20\d{2}|\d{1,2})$")
+# Date bracket around the extracted publication date. ±2 days catches
+# regional time-zone slop and articles republished a day later.
+_DATE_WINDOW_DAYS = 2
+
+
+def _extract_date_window(text: str) -> tuple[str, str] | None:
+    """Return GDELT (startdatetime, enddatetime) bracketing a YYYY-MM-DD
+    found in `text`, or None if no parseable date appears.
+
+    GDELT expects the YYYYMMDDhhmmss format and treats the bracket as
+    half-open inclusive on both ends.
+    """
+    m = _DATE_RE.search(text)
+    if not m:
+        return None
+    try:
+        d = datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    except ValueError:
+        return None
+    start = (d - timedelta(days=_DATE_WINDOW_DAYS)).strftime("%Y%m%d%H%M%S")
+    end = (d + timedelta(days=_DATE_WINDOW_DAYS)).strftime("%Y%m%d%H%M%S")
+    return start, end
 
 
 def _clean_query(raw: str) -> str:
-    """Trim a question into a keyword-search-friendly form.
-
-    Returns the raw query unchanged if filtering would leave nothing.
-    """
+    """Strip stopwords + date-fragment tokens; return the keyword vector."""
     tokens = _TOKEN_RE.findall(raw)
-    kept = [t for t in tokens if t.lower() not in _QUERY_STOP_WORDS]
-    return " ".join(kept) if kept else raw
+    kept: list[str] = []
+    for t in tokens:
+        lower = t.lower()
+        if lower in _QUERY_STOP_WORDS:
+            continue
+        if _DATE_NUM_RE.match(t):
+            continue
+        kept.append(t)
+    return " ".join(kept)
+
+
+def _gdelt_or_group(option_texts: list[str]) -> str:
+    """Build `(opt1 OR "opt 2" OR opt3)` for GDELT's Boolean DSL.
+
+    Quotes multi-word options so they're treated as exact phrases;
+    drops options that collapse to empty after cleaning. Returns ""
+    if nothing usable remains.
+    """
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for t in option_texts:
+        c = _clean_query(t).strip()
+        if not c or c.lower() in seen:
+            continue
+        seen.add(c.lower())
+        cleaned.append(c)
+    if not cleaned:
+        return ""
+    parts = [f'"{c}"' if " " in c else c for c in cleaned]
+    return "(" + " OR ".join(parts) + ")"
 
 
 def _format_seendate(raw: str) -> str:
@@ -107,7 +140,8 @@ class LiveGDELTRetriever:
         self,
         *,
         top_k: int = 6,
-        timeout: float = 12.0,
+        timeout: float = 15.0,
+        connect_timeout: float = 5.0,
         timespan: str | None = None,
         source_lang: str | None = "eng",
         user_agent: str | None = None,
@@ -117,58 +151,102 @@ class LiveGDELTRetriever:
         `timespan` is a GDELT relative window like "1y" / "6m" / "7d".
         None (default) hits the full ~2015-present index ranked by
         relevance, which suits historical news questions; pass "1y" if
-        the question set skews recent.
+        the question set skews recent. Per-question date extraction
+        (when the question text contains a YYYY-MM-DD) overrides this
+        with a tight `startdatetime`/`enddatetime` window.
 
         `source_lang` filters by article language. "eng" by default --
         the quiz is in English so non-English hits are noise.
+
+        Timeouts are split: `connect_timeout` for TCP/TLS handshake
+        (GDELT throttles new connections under load) and `timeout` for
+        the read once connected. Fail-fast on connect avoids burning
+        the game's 30s budget on a dead route.
         """
         self._top_k = top_k
-        self._timeout = timeout
+        self._read_timeout = timeout
+        self._connect_timeout = connect_timeout
         self._timespan = timespan
         self._source_lang = source_lang
         self._verbose = verbose
         ua = user_agent or os.environ.get("WIKI_USER_AGENT", _DEFAULT_UA)
         self._session = requests.Session()
         self._session.headers.update({"User-Agent": ua})
-        # In-process cache keyed on the query string. Same rationale as
-        # live_wiki: live play sees few duplicates within a game, but a
-        # kernel-restart retry of the same game will hit this.
+        # In-process cache keyed on the full effective query (incl. opts
+        # + date window). Same rationale as live_wiki: live play sees few
+        # duplicates within a game, but a kernel-restart retry will hit
+        # this.
         self._cache: dict[str, list[Passage]] = {}
 
-    def search(self, query: str, k: int | None = None) -> list[Passage]:
+    def search(
+        self,
+        query: str,
+        k: int | None = None,
+        *,
+        option_texts: list[str] | None = None,
+    ) -> list[Passage]:
         """Return up to `k` recent news headlines for `query`.
+
+        `option_texts` are the answer-option strings, used as OR-grouped
+        entity anchors in the GDELT query -- a question like "which
+        senator lost" gets paired with `(Cassidy OR Cruz OR McCain OR
+        Rubio)`, vastly improving recall on entity-disambiguation
+        questions. Pass None to skip the anchor.
 
         On any failure (network, JSON, missing fields), logs and returns
         `[]`. Never propagates exceptions to the caller.
         """
         k = k or self._top_k
-        if query in self._cache:
-            hits = self._cache[query][:k]
+
+        date_window = _extract_date_window(query)
+        keywords = _clean_query(query)
+        or_group = _gdelt_or_group(option_texts) if option_texts else ""
+
+        # Assemble the GDELT query body. We must always have at least one
+        # positive term -- a query of only `sourcelang:eng` is rejected.
+        body_parts: list[str] = []
+        if keywords:
+            body_parts.append(keywords)
+        if or_group:
+            body_parts.append(or_group)
+        if not body_parts:
+            if self._verbose:
+                print("   [live_gdelt] query collapsed to empty after cleaning; returning []")
+            return []
+        body_parts.append(f"sourcelang:{self._source_lang}") if self._source_lang else None
+        gdelt_query = " ".join(p for p in body_parts if p)
+
+        # Cache key includes the date window so two questions about the
+        # same topic but different dates don't share a stale answer.
+        cache_key = f"{gdelt_query}||{date_window or ''}"
+        if cache_key in self._cache:
+            hits = self._cache[cache_key][:k]
             if self._verbose:
                 print(f"   [live_gdelt] cache hit: {len(hits)} article(s) for query")
             return hits
 
-        cleaned = _clean_query(query)
-        # GDELT's query DSL ANDs space-separated terms. The language
-        # filter is just another space-separated operator; no parens
-        # needed. Empirically, wrapping in parens trips a different
-        # parse path that returns rate-limit-style errors more often.
-        gdelt_query = cleaned
-        if self._source_lang:
-            gdelt_query = f"{gdelt_query} sourcelang:{self._source_lang}"
-
         if self._verbose:
-            shown = cleaned if len(cleaned) <= 80 else cleaned[:77] + "..."
+            shown = gdelt_query if len(gdelt_query) <= 120 else gdelt_query[:117] + "..."
             print(f'   [live_gdelt] searching: "{shown}" (top {k})')
-            if cleaned != query.strip():
-                raw_shown = query if len(query) <= 80 else query[:77] + "..."
-                print(f'   [live_gdelt] cleaned from: "{raw_shown}"')
+            if date_window:
+                print(f"   [live_gdelt] date window: {date_window[0]} .. {date_window[1]}")
 
         try:
-            articles = self._search_articles(gdelt_query, k)
+            articles = self._search_articles(gdelt_query, k, date_window)
         except Exception as e:  # noqa: BLE001 -- never break play on retrieval
             print(f"   [live_gdelt] search failed ({type(e).__name__}: {e}); returning []")
             return []
+        # Fallback: a date-windowed query that finds nothing is often a
+        # publication-lag artifact (article shows up under a different
+        # date). Retry once without the window before giving up.
+        if not articles and date_window is not None:
+            if self._verbose:
+                print("   [live_gdelt] no articles in date window; retrying without window")
+            try:
+                articles = self._search_articles(gdelt_query, k, None)
+            except Exception as e:  # noqa: BLE001
+                print(f"   [live_gdelt] fallback search failed ({type(e).__name__}: {e})")
+                articles = []
         if not articles:
             if self._verbose:
                 print("   [live_gdelt] no articles returned for query")
@@ -203,27 +281,40 @@ class LiveGDELTRetriever:
                 )
             )
 
-        self._cache[query] = passages
+        self._cache[cache_key] = passages
         if self._verbose:
             print(f"   [live_gdelt] fetched {len(passages)} article(s)")
         return passages
 
-    def _search_articles(self, query: str, k: int) -> list[dict]:
-        params = {
+    def _search_articles(
+        self,
+        query: str,
+        k: int,
+        date_window: tuple[str, str] | None,
+    ) -> list[dict]:
+        params: dict[str, str] = {
             "query": query,
             "mode": "ArtList",
             "format": "json",
             "maxrecords": str(max(1, min(k, 250))),
             "sort": "HybridRel",
         }
-        if self._timespan:
+        if date_window is not None:
+            params["startdatetime"], params["enddatetime"] = date_window
+        elif self._timespan:
             params["timespan"] = self._timespan
-        # max_attempts=1: a single try, no retry. GDELT is slow enough that
-        # exponential-backoff retries blow past the 30s game timer. Failing
-        # to [] lets the LLM answer from parametric knowledge -- still a
-        # better outcome than timing out the answer.
+
+        # Split connect/read timeouts. requests accepts (connect, read)
+        # tuples; _get_with_retry forwards `timeout` straight through.
+        # max_attempts=1: GDELT is slow enough that retrying blows past
+        # the 30s game timer. Failing to [] lets the LLM answer from
+        # parametric knowledge -- a better outcome than a wall-clock kill.
         resp = _get_with_retry(
-            self._session, _API_URL, params, timeout=self._timeout, max_attempts=1
+            self._session,
+            _API_URL,
+            params,
+            timeout=(self._connect_timeout, self._read_timeout),  # type: ignore[arg-type]
+            max_attempts=1,
         )
         # GDELT enforces ~1 req/5s and signals rate-limiting with a 200
         # body of plain text ("Please limit requests to one every 5

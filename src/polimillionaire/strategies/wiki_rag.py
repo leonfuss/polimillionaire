@@ -130,20 +130,24 @@ class WikiRagStrategy:
             # single-list rrf is a rank-ordered passthrough — still correct
             fused = reciprocal_rank_fusion(rankings, top_n=self._fused_k)
 
-            # Live wiki lookup, when enabled, augments the rerank pool with
-            # per-question Wikipedia hits. Static index covers high-traffic
-            # topics but is frozen at crawl time; live lookup picks up the
-            # long tail (recent films, obscure scientists). Dedup by article
-            # title against the static fused list so the reranker doesn't
-            # see the same article twice.
+            # Live lookup, when enabled, augments the rerank pool with
+            # per-question hits. Static index covers high-traffic topics
+            # but is frozen at crawl time; live lookup picks up the long
+            # tail (recent films, obscure scientists, breaking news).
+            # Dedup by article title against the static fused list so
+            # the reranker doesn't see the same article twice.
             #
-            # MediaWiki's search is keyword-based -- piping the four
-            # option strings into the same query just adds distractor
-            # tokens and routinely returns zero hits. Use the question
-            # text alone; LiveWikiRetriever handles stop-word stripping.
+            # We pass option_texts so news-flavoured retrievers (GDELT)
+            # can OR-anchor on entity names. MediaWiki ignores them --
+            # piping options into keyword search adds distractors and
+            # nulls out the result set.
             live_passages: list = []
             if self._live is not None and self._live_k > 0:
-                live_passages = self._live.search(question.text, k=self._live_k)
+                live_passages = self._live.search(
+                    question.text,
+                    k=self._live_k,
+                    option_texts=[o.text for o in question.options if o.text],
+                )
                 if live_passages:
                     static_titles = {
                         p.metadata.get("title", "").lower()

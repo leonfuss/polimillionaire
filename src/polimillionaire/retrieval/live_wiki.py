@@ -151,8 +151,19 @@ class LiveWikiRetriever:
         # duplicates, but a kernel-restart retry of the same game will.
         self._cache: dict[str, list[Passage]] = {}
 
-    def search(self, query: str, k: int | None = None) -> list[Passage]:
+    def search(
+        self,
+        query: str,
+        k: int | None = None,
+        *,
+        option_texts: list[str] | None = None,  # noqa: ARG002
+    ) -> list[Passage]:
         """Return up to `k` live Wikipedia passages for `query`.
+
+        `option_texts` is accepted for protocol compatibility with
+        `LiveGDELTRetriever` but ignored here: piping the four option
+        strings into MediaWiki's keyword search adds distractor tokens
+        and routinely nulls out the result set.
 
         On any failure (network, JSON, missing fields), logs and returns
         `[]`. Never propagates exceptions to the caller.
