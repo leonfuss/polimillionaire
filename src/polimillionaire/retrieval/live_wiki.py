@@ -131,6 +131,9 @@ def _clean_query(raw: str) -> str:
 class LiveWikiRetriever:
     """Per-call Wikipedia lookup. Drop-in alongside `Retriever.search()`."""
 
+    # Lets the factory pick a source-appropriate prompt variant.
+    source_name = "wiki"
+
     def __init__(
         self,
         *,

@@ -99,6 +99,52 @@ def _render_news_rag_v1(question: Question, passages: list[Passage]) -> list[Mes
     ]
 
 
+# --- news_rag/v2-articles ---------------------------------------------------
+# Article-snippet variant for sources that return real body text (Tavily).
+# Mirrors the wiki_rag layout (header + multi-paragraph blocks) but labels
+# the content as news rather than encyclopedia material.
+
+_NEWS_ARTICLES_SYSTEM = (
+    "You are an expert trivia player. News article excerpts relevant to the "
+    "question are provided below, each with its source and publication date. "
+    "Use them when they are helpful; rely on your own knowledge when they "
+    "are not. First write a brief rationale (no more than three sentences), "
+    "then commit to the option you believe is correct."
+)
+
+
+def _format_news_article_passage(p: Passage, idx: int) -> str:
+    title = p.metadata.get("title", "")
+    domain = p.metadata.get("domain", "")
+    seendate = p.metadata.get("seendate", "")
+    tail_bits = [b for b in (domain, seendate) if b]
+    tail = f" ({', '.join(tail_bits)})" if tail_bits else ""
+    body = p.text
+    if len(body) > _MAX_PASSAGE_CHARS:
+        body = body[:_MAX_PASSAGE_CHARS] + " [...]"
+    header = f"[{idx}] {title}{tail}" if title else f"[{idx}]{tail}"
+    return f"{header}\n{body}"
+
+
+def _format_news_article_block(passages: list[Passage]) -> str:
+    if not passages:
+        return ""
+    parts = "\n\n".join(_format_news_article_passage(p, i + 1) for i, p in enumerate(passages))
+    return f"News article excerpts:\n\n{parts}"
+
+
+def _render_news_rag_v2_articles(question: Question, passages: list[Passage]) -> list[Message]:
+    block = _format_news_article_block(passages)
+    user_parts = []
+    if block:
+        user_parts.append(block)
+    user_parts.append(render_question_block(question))
+    return [
+        {"role": "system", "content": _NEWS_ARTICLES_SYSTEM},
+        {"role": "user", "content": "\n\n".join(user_parts)},
+    ]
+
+
 def _render_wiki_rag_v1(question: Question, passages: list[Passage]) -> list[Message]:
     block = _format_passage_block(passages)
     user_parts = []
@@ -129,11 +175,15 @@ PROMPTS: dict[str, PromptVariant] = {
         version="wiki_rag/v2-noreason", render=_render_wiki_rag_v2_noreason
     ),
     "news_rag/v1": PromptVariant(version="news_rag/v1", render=_render_news_rag_v1),
+    "news_rag/v2-articles": PromptVariant(
+        version="news_rag/v2-articles", render=_render_news_rag_v2_articles
+    ),
 }
 
 LATEST = "wiki_rag/v1"
 NOREASON = "wiki_rag/v2-noreason"
 NEWS_LATEST = "news_rag/v1"
+NEWS_ARTICLES = "news_rag/v2-articles"
 
 # legacy module-level aliases so existing callers that do `prompt.render(...)` keep working
 PROMPT_VERSION = LATEST

@@ -70,6 +70,8 @@ _reranker_cache: dict[str, Any] = {}
 _live_wiki_cache: dict[str, Any] = {}
 # Same rationale for the GDELT news retriever.
 _live_gdelt_cache: dict[str, Any] = {}
+# Same rationale for Tavily; we share one Session + cache per process.
+_live_tavily_cache: dict[str, Any] = {}
 
 
 def register(name: str) -> Callable[[StrategyBuilder], StrategyBuilder]:
@@ -232,13 +234,50 @@ def _get_live_gdelt(*, verbose: bool = False) -> Any:
     return _live_gdelt_cache[key]
 
 
-# Per-cid live source picker. News needs a news index, not Wikipedia; other
-# live-only cids stay on MediaWiki. Returning a LiveSource-shaped object
-# (anything with `search(query, k) -> list[Passage]`).
+def _get_live_tavily(*, verbose: bool = False) -> Any | None:
+    """Singleton LiveTavilyRetriever, or None if TAVILY_API_KEY is unset.
+
+    Returning None lets the caller fall through to a different source
+    silently -- requiring a Tavily key just to start the program would
+    block anyone who only has the GDELT path available.
+    """
+    from polimillionaire.retrieval.live_tavily import (
+        LiveTavilyRetriever,
+        TavilyConfigError,
+    )
+
+    key = "default"
+    if key in _live_tavily_cache:
+        if verbose:
+            _live_tavily_cache[key]._verbose = True
+        return _live_tavily_cache[key]
+    try:
+        _live_tavily_cache[key] = LiveTavilyRetriever(verbose=verbose)
+    except TavilyConfigError:
+        return None
+    return _live_tavily_cache[key]
+
+
+# Per-cid live source picker. News (cid 5) prefers Tavily for its article
+# snippets, falling back to GDELT when no Tavily key is configured.
+# Other live-only cids stay on MediaWiki.
 def _live_source_for(cid: int, *, verbose: bool = False) -> Any:
     if cid == 5:
+        tavily = _get_live_tavily(verbose=verbose)
+        if tavily is not None:
+            return tavily
         return _get_live_gdelt(verbose=verbose)
     return _get_live_wiki(verbose=verbose)
+
+
+# Each live source pairs with a prompt variant whose layout matches its
+# output: Wikipedia and Tavily yield article snippets; GDELT yields
+# headlines only. The factory picks the right one based on source_name.
+_PROMPT_BY_SOURCE: dict[str, str] = {
+    "wiki": "wiki_rag/v1",
+    "tavily": "news_rag/v2-articles",
+    "gdelt": "news_rag/v1",
+}
 
 
 def _math_retriever(project_root: Path) -> Any:
@@ -387,6 +426,13 @@ def _build_wiki_rag(
         # static toggles off so WikiRagStrategy doesn't ask for a retriever
         # we don't have.
         live_kw = {**kw, "use_dense": False, "use_sparse": False, "use_reranker": False}
+        # Auto-pick a prompt that matches the chosen source's output
+        # shape unless the caller already pinned one.
+        if "prompt_version" not in live_kw:
+            source_name = getattr(live, "source_name", "")
+            chosen = _PROMPT_BY_SOURCE.get(source_name)
+            if chosen is not None:
+                live_kw["prompt_version"] = chosen
         return WikiRagStrategy(
             llm,
             retriever=None,
@@ -437,9 +483,10 @@ _AUTO_WIKI_DEFAULTS: dict[int, dict[str, Any]] = {
     # Live-only: widen the live pool a bit; with no static fallback we want
     # more candidates feeding the LLM.
     4: {"live_k": 6, "top_k": 6},  # philosophy & psychology (Wikipedia)
-    # News routes through GDELT instead of MediaWiki -- see _live_source_for.
-    # `news_rag/v1` matches the headline-list output GDELT produces.
-    5: {"live_k": 8, "top_k": 8, "prompt_version": "news_rag/v1"},
+    # News routes to Tavily when TAVILY_API_KEY is set, else GDELT --
+    # _live_source_for picks. The prompt is chosen to match whichever
+    # source wins (see _PROMPT_BY_SOURCE), so we don't pin it here.
+    5: {"live_k": 8, "top_k": 8},
 }
 
 

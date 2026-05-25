@@ -136,6 +136,9 @@ def _format_seendate(raw: str) -> str:
 class LiveGDELTRetriever:
     """Per-call GDELT news lookup. Drop-in alongside `LiveWikiRetriever`."""
 
+    # Lets the factory pick a source-appropriate prompt variant.
+    source_name = "gdelt"
+
     def __init__(
         self,
         *,
