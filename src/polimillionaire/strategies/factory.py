@@ -68,6 +68,8 @@ _reranker_cache: dict[str, Any] = {}
 # one shared instance per session keeps the session warm and lets the
 # cache hit across competitions for any incidental overlap.
 _live_wiki_cache: dict[str, Any] = {}
+# Same rationale for the GDELT news retriever.
+_live_gdelt_cache: dict[str, Any] = {}
 
 
 def register(name: str) -> Callable[[StrategyBuilder], StrategyBuilder]:
@@ -218,6 +220,27 @@ def _get_live_wiki(*, verbose: bool = False) -> Any:
     return _live_wiki_cache[key]
 
 
+def _get_live_gdelt(*, verbose: bool = False) -> Any:
+    """Singleton LiveGDELTRetriever shared across competitions for this session."""
+    from polimillionaire.retrieval.live_gdelt import LiveGDELTRetriever
+
+    key = "default"
+    if key not in _live_gdelt_cache:
+        _live_gdelt_cache[key] = LiveGDELTRetriever(verbose=verbose)
+    elif verbose:
+        _live_gdelt_cache[key]._verbose = True
+    return _live_gdelt_cache[key]
+
+
+# Per-cid live source picker. News needs a news index, not Wikipedia; other
+# live-only cids stay on MediaWiki. Returning a LiveSource-shaped object
+# (anything with `search(query, k) -> list[Passage]`).
+def _live_source_for(cid: int, *, verbose: bool = False) -> Any:
+    if cid == 5:
+        return _get_live_gdelt(verbose=verbose)
+    return _get_live_wiki(verbose=verbose)
+
+
 def _math_retriever(project_root: Path) -> Any:
     from polimillionaire.retrieval.retriever import Retriever
 
@@ -359,7 +382,7 @@ def _build_wiki_rag(
         raise ValueError("wiki_rag requires competition_id (0, 1, 2, 4, or 5)")
 
     if competition_id in _LIVE_ONLY_CIDS:
-        live = _get_live_wiki(verbose=kw.get("verbose", False))
+        live = _live_source_for(competition_id, verbose=kw.get("verbose", False))
         # Strip live_lookup -- it's already implicit here -- and force the
         # static toggles off so WikiRagStrategy doesn't ask for a retriever
         # we don't have.
@@ -413,8 +436,10 @@ _AUTO_WIKI_DEFAULTS: dict[int, dict[str, Any]] = {
     2: {"live_lookup": True},  # science -- live picks up post-crawl discoveries
     # Live-only: widen the live pool a bit; with no static fallback we want
     # more candidates feeding the LLM.
-    4: {"live_k": 6, "top_k": 6},  # philosophy & psychology
-    5: {"live_k": 6, "top_k": 6},  # news
+    4: {"live_k": 6, "top_k": 6},  # philosophy & psychology (Wikipedia)
+    # News routes through GDELT instead of MediaWiki -- see _live_source_for.
+    # `news_rag/v1` matches the headline-list output GDELT produces.
+    5: {"live_k": 8, "top_k": 8, "prompt_version": "news_rag/v1"},
 }
 
 

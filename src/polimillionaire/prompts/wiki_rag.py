@@ -1,4 +1,9 @@
-"""Wikipedia-RAG prompt variants."""
+"""Live-RAG prompt variants.
+
+Despite the historical "wiki_rag" filename, this module also hosts the
+news_rag variant used when the live source is GDELT (cid 5). Co-located
+to keep the strategy's `prompt.PROMPTS` lookup single-source.
+"""
 
 from __future__ import annotations
 
@@ -53,6 +58,47 @@ def _format_passage_block(passages: list[Passage]) -> str:
     return f"Wikipedia excerpts:\n\n{parts}"
 
 
+# --- news_rag variant -------------------------------------------------------
+# GDELT only gives us titles + metadata, not body text, so headlines render
+# as a one-line list rather than the multi-paragraph Wikipedia layout above.
+
+_NEWS_V1_SYSTEM = (
+    "You are an expert trivia player. Recent news headlines relevant to the "
+    "question are listed below, each with its source and publication date. "
+    "Use them when they are helpful; rely on your own knowledge when they "
+    "are not. First write a brief rationale (no more than three sentences), "
+    "then commit to the option you believe is correct."
+)
+
+
+def _format_news_passage(p: Passage, idx: int) -> str:
+    title = p.metadata.get("title") or p.text
+    domain = p.metadata.get("domain", "")
+    seendate = p.metadata.get("seendate", "")
+    tail_bits = [b for b in (domain, seendate) if b]
+    tail = f" ({', '.join(tail_bits)})" if tail_bits else ""
+    return f"[{idx}] {title}{tail}"
+
+
+def _format_news_block(passages: list[Passage]) -> str:
+    if not passages:
+        return ""
+    parts = "\n".join(_format_news_passage(p, i + 1) for i, p in enumerate(passages))
+    return f"Recent news headlines:\n\n{parts}"
+
+
+def _render_news_rag_v1(question: Question, passages: list[Passage]) -> list[Message]:
+    block = _format_news_block(passages)
+    user_parts = []
+    if block:
+        user_parts.append(block)
+    user_parts.append(render_question_block(question))
+    return [
+        {"role": "system", "content": _NEWS_V1_SYSTEM},
+        {"role": "user", "content": "\n\n".join(user_parts)},
+    ]
+
+
 def _render_wiki_rag_v1(question: Question, passages: list[Passage]) -> list[Message]:
     block = _format_passage_block(passages)
     user_parts = []
@@ -82,10 +128,12 @@ PROMPTS: dict[str, PromptVariant] = {
     "wiki_rag/v2-noreason": PromptVariant(
         version="wiki_rag/v2-noreason", render=_render_wiki_rag_v2_noreason
     ),
+    "news_rag/v1": PromptVariant(version="news_rag/v1", render=_render_news_rag_v1),
 }
 
 LATEST = "wiki_rag/v1"
 NOREASON = "wiki_rag/v2-noreason"
+NEWS_LATEST = "news_rag/v1"
 
 # legacy module-level aliases so existing callers that do `prompt.render(...)` keep working
 PROMPT_VERSION = LATEST
