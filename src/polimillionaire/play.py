@@ -285,8 +285,31 @@ def _strip_option_prefix(text: str) -> str:
     return _OPTION_PREFIX_RE.sub("", text, count=1).strip()
 
 
+# Whisper biases its decoder toward whatever vocabulary appears in the
+# initial prompt -- the model treats it as the previous transcribed
+# segment. We feed an exemplar-style math snippet so single letters
+# ("x", "n"), digits, and operator words ("squared", "divided by") get
+# weighted up. Only applied for the math competition; other categories
+# get a clean decode with no bias.
+#
+# Kept natural-sounding rather than instruction-shaped: Whisper was
+# trained on transcribed speech and prefers prompts that look like real
+# audio. ~25 tokens -- well under the 224-token cap.
+_MATH_ASR_PROMPT = (
+    "Math problem: solve for x squared plus three times x minus two, where x equals five. "
+    "Numbers, variables x y n k, plus minus times divided by, squared cubed, square root, equals."
+)
+
+# Maps competition_id to the initial_prompt forwarded to Whisper. Add an
+# entry here to bias other categories' vocabulary.
+_ASR_PROMPT_BY_CID: dict[int, str] = {3: _MATH_ASR_PROMPT}
+
+
 def _speech_question_builder(
-    transcriber: WhisperTranscriber, *, verbose: bool = True
+    transcriber: WhisperTranscriber,
+    *,
+    competition_id: int,
+    verbose: bool = True,
 ) -> QuestionBuilder:
     """Build a question_builder that fetches WAV audio and transcribes it.
 
@@ -296,6 +319,9 @@ def _speech_question_builder(
     clip runs in ~0.3-0.8 s on a warm GPU, so all four transcriptions
     typically complete well inside the pre-clock window.
     """
+    initial_prompt = _ASR_PROMPT_BY_CID.get(competition_id)
+    if verbose and initial_prompt is not None:
+        print(f"  [asr] using competition-{competition_id} prompt bias for math vocabulary")
 
     def _build(game: GameSession, level: int) -> Question | None:
         if game.current_question is None:
@@ -306,7 +332,7 @@ def _speech_question_builder(
         if verbose:
             print(f"  level {level}: fetching question audio...", end="", flush=True)
         wav_q = game.fetch_audio_question()
-        text_q = transcriber.transcribe(wav_q)
+        text_q = transcriber.transcribe(wav_q, initial_prompt=initial_prompt)
         if verbose:
             print(f" {len(wav_q)} B -> {text_q!r}")
 
@@ -316,7 +342,9 @@ def _speech_question_builder(
             if verbose:
                 print(f"  level {level}: fetching option {letter} audio...", end="", flush=True)
             wav_o = game.fetch_audio_option_next()
-            text_o = _strip_option_prefix(transcriber.transcribe(wav_o))
+            text_o = _strip_option_prefix(
+                transcriber.transcribe(wav_o, initial_prompt=initial_prompt)
+            )
             if verbose:
                 print(f" {len(wav_o)} B -> {text_o!r}")
             option_texts.append(text_o)
@@ -367,7 +395,7 @@ def speech_auto_play_loop(
             latency_ms=decision.latency_ms,
         )
 
-    builder = _speech_question_builder(transcriber, verbose=verbose)
+    builder = _speech_question_builder(transcriber, competition_id=competition_id, verbose=verbose)
     for game_num in range(max_games):
         print(f"=== game {game_num + 1}/{max_games} (speech) ===")
         counts = _play_one_game(

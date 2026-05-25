@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 if TYPE_CHECKING:
+    import torch
     from transformers import WhisperForConditionalGeneration, WhisperProcessor
 
 DEFAULT_MODEL = "openai/whisper-large-v3-turbo"
@@ -103,6 +104,10 @@ class WhisperTranscriber:
         self.language = language
         self._processor: WhisperProcessor | None = None
         self._model: WhisperForConditionalGeneration | None = None
+        # prompt_ids are tokenized once per unique prompt string. Speech mode
+        # calls transcribe() 5x per question; caching avoids re-tokenizing
+        # the same math prompt 4 extra times.
+        self._prompt_ids_cache: dict[str, torch.Tensor] = {}
 
     def preload(self) -> None:
         """Eagerly load the processor + model so the first transcribe() doesn't
@@ -131,8 +136,16 @@ class WhisperTranscriber:
         model.eval()
         self._model = model
 
-    def transcribe(self, wav_bytes: bytes) -> str:
-        """Transcribe a WAV blob to whitespace-normalised text."""
+    def transcribe(self, wav_bytes: bytes, *, initial_prompt: str | None = None) -> str:
+        """Transcribe a WAV blob to whitespace-normalised text.
+
+        `initial_prompt` biases the decoder's language model with a
+        short in-domain string (Whisper treats it as if it were the
+        previous transcribed segment). Useful for vocabulary the model
+        otherwise mishears -- e.g. math symbols/variables. Keep it
+        natural-sounding rather than instruction-shaped; the model was
+        trained on transcribed speech, not prose commands.
+        """
         self._ensure_loaded()
         assert self._model is not None and self._processor is not None
 
@@ -154,12 +167,24 @@ class WhisperTranscriber:
         if self.language:
             gen_kwargs["language"] = self.language
             gen_kwargs["task"] = "transcribe"
+        if initial_prompt:
+            gen_kwargs["prompt_ids"] = self._encode_prompt(initial_prompt)
 
         with torch.inference_mode():
             ids = self._model.generate(features, **gen_kwargs)
 
         text = self._processor.batch_decode(ids, skip_special_tokens=True)[0]
         return _normalize_text(text)
+
+    def _encode_prompt(self, prompt: str) -> torch.Tensor:
+        """Return cached prompt_ids tensor on the model's device."""
+        assert self._processor is not None
+        cached = self._prompt_ids_cache.get(prompt)
+        if cached is not None:
+            return cached
+        ids = self._processor.get_prompt_ids(prompt, return_tensors="pt").to(self.device)
+        self._prompt_ids_cache[prompt] = ids
+        return ids
 
 
 __all__ = ["WhisperTranscriber"]
