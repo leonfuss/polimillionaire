@@ -3,6 +3,10 @@
 Hybrid retrieval (dense + BM25) fused via RRF, reranked by a cross-encoder,
 then a single zero-shot JSON completion. No ReAct loop or calculator.
 
+When `retriever` and `bm25` are None and `live` is provided, runs in
+live-only mode: per-question MediaWiki lookup as the sole candidate
+source. Used for competitions with no pre-built static index.
+
 If any retrieval step raises (missing index, embedder error, etc.) the
 strategy degrades to a bare-LLM answer: the prompt is rendered with an
 empty passage list and the model answers from its own knowledge.
@@ -37,9 +41,9 @@ class WikiRagStrategy:
     def __init__(
         self,
         llm: LLM,
-        retriever: Retriever,
-        bm25: BM25Index,
-        reranker: Reranker,
+        retriever: Retriever | None,
+        bm25: BM25Index | None,
+        reranker: Reranker | None,
         *,
         live: LiveWikiRetriever | None = None,
         live_k: int = 4,
@@ -56,9 +60,23 @@ class WikiRagStrategy:
         prompt_version: str | None = None,
         verbose: bool = False,
     ) -> None:
-        if not (use_dense or use_sparse):
-            raise ValueError("at least one of use_dense, use_sparse must be True")
-        if nprobe is not None:
+        # Three candidate sources: dense + sparse from a static index, plus
+        # live MediaWiki lookup. Need at least one. Live-only mode (cids
+        # without a pre-built index) flips both static toggles off and
+        # relies on `live`.
+        has_static = use_dense or use_sparse
+        has_live = live is not None and live_k > 0
+        if not (has_static or has_live):
+            raise ValueError(
+                "need at least one source: use_dense, use_sparse, or live (with live_k>0)"
+            )
+        if use_dense and retriever is None:
+            raise ValueError("use_dense=True requires a retriever")
+        if use_sparse and bm25 is None:
+            raise ValueError("use_sparse=True requires a bm25 index")
+        if use_reranker and reranker is None:
+            raise ValueError("use_reranker=True requires a reranker")
+        if nprobe is not None and retriever is not None:
             retriever.set_nprobe(nprobe)
         # When the caller doesn't override the prompt, pick a variant whose
         # system message matches the schema: no rationale -> noreason prompt.

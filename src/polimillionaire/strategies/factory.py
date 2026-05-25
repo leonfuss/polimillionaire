@@ -52,6 +52,11 @@ _REGISTRY: dict[str, StrategyBuilder] = {}
 # scripts/ -> repo root -> src/polimillionaire/strategies/factory.py is 4 levels up
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
+# Competitions with no pre-built static index: we hit Wikipedia per question
+# instead. Cheap path -- no embedder, no BM25, no reranker model -- just the
+# MediaWiki API + LLM. Add new live-only cids here.
+_LIVE_ONLY_CIDS: frozenset[int] = frozenset({4, 5})
+
 # Shared caches keyed by model name / index dir so a long-running session
 # (continuous_play, or a notebook sweep) doesn't repeatedly load the same
 # embedder, FAISS index, BM25 sidecar, or reranker from disk.
@@ -158,10 +163,14 @@ def preload(
     warmup), which on a 30s timer turns the first question into a timeout.
     Call this once after `make_strategy(...)` and before the game loop.
 
-    `competition_ids=None` warms everything (0..3). On a single-comp run,
-    pass `[competition_id]` to avoid loading wiki indexes you won't use.
+    `competition_ids=None` warms everything (0..3 and the live-only cids).
+    Live-only cids (4, 5) have nothing to warm -- no embedder, no reranker --
+    so they're skipped here. On a single-comp run, pass `[competition_id]`
+    to avoid loading wiki indexes you won't use.
     """
-    cids = competition_ids if competition_ids is not None else [0, 1, 2, 3]
+    cids = (
+        competition_ids if competition_ids is not None else [0, 1, 2, 3, *sorted(_LIVE_ONLY_CIDS)]
+    )
     root = _resolve_project_root(project_root)
 
     for cid in cids:
@@ -176,6 +185,7 @@ def preload(
             retriever = _math_retriever(root)
             if retriever is not None:
                 retriever.embedder.preload()
+        # cids in _LIVE_ONLY_CIDS: nothing to preload (no local models)
 
 
 def _get_embedder(model_name: str) -> Any:
@@ -346,7 +356,23 @@ def _build_wiki_rag(
     from polimillionaire.strategies.zero_shot import ZeroShotStrategy
 
     if competition_id is None:
-        raise ValueError("wiki_rag requires competition_id (0, 1, or 2)")
+        raise ValueError("wiki_rag requires competition_id (0, 1, 2, 4, or 5)")
+
+    if competition_id in _LIVE_ONLY_CIDS:
+        live = _get_live_wiki(verbose=kw.get("verbose", False))
+        # Strip live_lookup -- it's already implicit here -- and force the
+        # static toggles off so WikiRagStrategy doesn't ask for a retriever
+        # we don't have.
+        live_kw = {**kw, "use_dense": False, "use_sparse": False, "use_reranker": False}
+        return WikiRagStrategy(
+            llm,
+            retriever=None,
+            bm25=None,
+            reranker=None,
+            live=live,
+            **_accepts(WikiRagStrategy, **live_kw),
+        )
+
     components = _wiki_components(_resolve_project_root(project_root), competition_id)
     if components is None:
         if strict:
@@ -367,9 +393,12 @@ def _build_wiki_rag(
 # the size of history and ~2x science -- the relevant doc is more likely to be
 # outside the default nprobe=32 / top-50 candidate window, so widen for it.
 # `live_lookup` enables per-question Wikipedia API fusion. On by default for
-# all three wiki categories now -- the rerank pool dedups by title so live
+# all three static wiki categories -- the rerank pool dedups by title so live
 # never displaces a strong static hit, and the worst case is a few hundred ms
 # of extra latency on a single API call.
+# Cids in `_LIVE_ONLY_CIDS` (4, 5) skip the static index entirely; the factory
+# wires them through WikiRagStrategy in live-only mode, so `live_lookup` here
+# is irrelevant for them.
 # Override on a per-call basis by passing kwargs to make_strategy("auto", ...).
 _AUTO_WIKI_DEFAULTS: dict[int, dict[str, Any]] = {
     0: {
@@ -382,6 +411,10 @@ _AUTO_WIKI_DEFAULTS: dict[int, dict[str, Any]] = {
     },
     1: {"live_lookup": True},  # history -- defaults work but live catches edge cases
     2: {"live_lookup": True},  # science -- live picks up post-crawl discoveries
+    # Live-only: widen the live pool a bit; with no static fallback we want
+    # more candidates feeding the LLM.
+    4: {"live_k": 6, "top_k": 6},  # philosophy & psychology
+    5: {"live_k": 6, "top_k": 6},  # news
 }
 
 
@@ -413,10 +446,12 @@ def _build_auto(
     def _wiki_kw(cid: int) -> dict[str, Any]:
         return {**_AUTO_WIKI_DEFAULTS.get(cid, {}), **kw}
 
+    wiki_cids = (0, 1, 2, *sorted(_LIVE_ONLY_CIDS))
+
     if competition_id is not None:
         # single-competition live play: only build the one route we need
         routes: dict[int, Strategy] = {}
-        if competition_id in (0, 1, 2):
+        if competition_id in wiki_cids:
             routes[competition_id] = _build_wiki_rag(
                 llm, competition_id=competition_id, project_root=root, **_wiki_kw(competition_id)
             )
@@ -425,9 +460,9 @@ def _build_auto(
         # the RoutedStrategy default handles any unmatched competition_id at call time
         return RoutedStrategy(routes=routes, default=placeholder)
 
-    # replay path: build all four routes
+    # replay path: build every known route
     routes = {}
-    for cid in (0, 1, 2):
+    for cid in wiki_cids:
         routes[cid] = _build_wiki_rag(llm, competition_id=cid, project_root=root, **_wiki_kw(cid))
     routes[3] = _build_rag_calc_react(llm, project_root=root, **kw)
     return RoutedStrategy(routes=routes, default=placeholder)
