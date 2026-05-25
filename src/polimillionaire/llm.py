@@ -64,6 +64,16 @@ MODELS: dict[str, ModelSpec] = {
         repo_id="NousResearch/Hermes-3-Llama-3.1-8B-GGUF",
         filename="*Q4_K_M*.gguf",
     ),
+    # Hermes 4 14B is built on Qwen 3 14B (hybrid-mode reasoning), so the
+    # same `/no_think` suffix that disables thinking mode on qwen3-* applies
+    # here too -- structured-output reliability matters more than chain-of-
+    # thought traces for our use case. GGUFs by bartowski (same provider as
+    # phi4-14b above).
+    "hermes4-14b": ModelSpec(
+        repo_id="bartowski/NousResearch_Hermes-4-14B-GGUF",
+        filename="*Q4_K_M*.gguf",
+        user_suffix=" /no_think",
+    ),
     "phi4-14b": ModelSpec(
         repo_id="bartowski/phi-4-GGUF",
         filename="*Q4_K_M*.gguf",
