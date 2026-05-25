@@ -140,12 +140,12 @@ class LiveGDELTRetriever:
         self,
         *,
         top_k: int = 6,
-        timeout: float = 15.0,
-        connect_timeout: float = 5.0,
+        timeout: float = 20.0,
         timespan: str | None = None,
         source_lang: str | None = "eng",
         user_agent: str | None = None,
         verbose: bool = False,
+        failure_threshold: int = 3,
     ) -> None:
         """
         `timespan` is a GDELT relative window like "1y" / "6m" / "7d".
@@ -158,14 +158,17 @@ class LiveGDELTRetriever:
         `source_lang` filters by article language. "eng" by default --
         the quiz is in English so non-English hits are noise.
 
-        Timeouts are split: `connect_timeout` for TCP/TLS handshake
-        (GDELT throttles new connections under load) and `timeout` for
-        the read once connected. Fail-fast on connect avoids burning
-        the game's 30s budget on a dead route.
+        `timeout` covers both TCP connect and HTTP read. GDELT is slow
+        and erratic from some egress IPs, so we err on the generous
+        side; the circuit breaker below protects the wall clock.
+
+        `failure_threshold` arms a circuit breaker: after N consecutive
+        network failures the retriever short-circuits to [] without
+        hitting the network, so a flaky GDELT route doesn't burn a
+        timeout's worth of game time on every subsequent question.
         """
         self._top_k = top_k
-        self._read_timeout = timeout
-        self._connect_timeout = connect_timeout
+        self._timeout = timeout
         self._timespan = timespan
         self._source_lang = source_lang
         self._verbose = verbose
@@ -177,6 +180,12 @@ class LiveGDELTRetriever:
         # duplicates within a game, but a kernel-restart retry will hit
         # this.
         self._cache: dict[str, list[Passage]] = {}
+        # Circuit-breaker state. Trips after `failure_threshold` consecutive
+        # network failures and stays open for the rest of the session --
+        # callers can flip `_disabled` back if they want a manual reset.
+        self._failure_threshold = failure_threshold
+        self._consecutive_failures = 0
+        self._disabled = False
 
     def search(
         self,
@@ -197,6 +206,11 @@ class LiveGDELTRetriever:
         `[]`. Never propagates exceptions to the caller.
         """
         k = k or self._top_k
+
+        if self._disabled:
+            if self._verbose:
+                print("   [live_gdelt] circuit breaker open; skipping network call")
+            return []
 
         date_window = _extract_date_window(query)
         keywords = _clean_query(query)
@@ -233,19 +247,22 @@ class LiveGDELTRetriever:
 
         try:
             articles = self._search_articles(gdelt_query, k, date_window)
+            self._note_success()
         except Exception as e:  # noqa: BLE001 -- never break play on retrieval
-            print(f"   [live_gdelt] search failed ({type(e).__name__}: {e}); returning []")
+            self._note_failure(e)
             return []
         # Fallback: a date-windowed query that finds nothing is often a
         # publication-lag artifact (article shows up under a different
-        # date). Retry once without the window before giving up.
+        # date). Retry once without the window before giving up. Don't
+        # let this re-trip the breaker -- a successful empty search is
+        # not a network failure.
         if not articles and date_window is not None:
             if self._verbose:
                 print("   [live_gdelt] no articles in date window; retrying without window")
             try:
                 articles = self._search_articles(gdelt_query, k, None)
             except Exception as e:  # noqa: BLE001
-                print(f"   [live_gdelt] fallback search failed ({type(e).__name__}: {e})")
+                self._note_failure(e, label="fallback")
                 articles = []
         if not articles:
             if self._verbose:
@@ -304,17 +321,14 @@ class LiveGDELTRetriever:
         elif self._timespan:
             params["timespan"] = self._timespan
 
-        # Split connect/read timeouts. requests accepts (connect, read)
-        # tuples; _get_with_retry forwards `timeout` straight through.
-        # max_attempts=1: GDELT is slow enough that retrying blows past
-        # the 30s game timer. Failing to [] lets the LLM answer from
-        # parametric knowledge -- a better outcome than a wall-clock kill.
+        # Single timeout covering both connect + read. An earlier split
+        # (connect_timeout=5, read=15) failed in user-reported runs --
+        # the connect ceiling was too aggressive for high-latency egress
+        # to GDELT and tripped every call. max_attempts=1: GDELT is slow
+        # enough that retrying blows past the 30s game timer; failing
+        # to [] lets the LLM answer from parametric knowledge.
         resp = _get_with_retry(
-            self._session,
-            _API_URL,
-            params,
-            timeout=(self._connect_timeout, self._read_timeout),  # type: ignore[arg-type]
-            max_attempts=1,
+            self._session, _API_URL, params, timeout=self._timeout, max_attempts=1
         )
         # GDELT enforces ~1 req/5s and signals rate-limiting with a 200
         # body of plain text ("Please limit requests to one every 5
@@ -330,3 +344,28 @@ class LiveGDELTRetriever:
         except ValueError:
             return []
         return data.get("articles", []) or []
+
+    def _note_success(self) -> None:
+        # A successful network round-trip resets the breaker, even if
+        # the response had zero articles -- that's a successful empty
+        # search, not a connectivity failure.
+        self._consecutive_failures = 0
+
+    def _note_failure(self, exc: Exception, *, label: str = "") -> None:
+        self._consecutive_failures += 1
+        prefix = f"{label} " if label else ""
+        # Truncate the requests/urllib3 message -- the full one dumps
+        # the URL + nested exception chain and dominates the game log.
+        short = str(exc).splitlines()[0]
+        if len(short) > 100:
+            short = short[:97] + "..."
+        print(
+            f"   [live_gdelt] {prefix}search failed ({type(exc).__name__}: {short})"
+            f"; returning []"
+        )
+        if self._consecutive_failures >= self._failure_threshold and not self._disabled:
+            self._disabled = True
+            print(
+                f"   [live_gdelt] circuit breaker open after "
+                f"{self._failure_threshold} consecutive failures; skipping for the rest of the session"
+            )
