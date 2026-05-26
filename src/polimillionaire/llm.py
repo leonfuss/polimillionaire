@@ -78,6 +78,15 @@ MODELS: dict[str, ModelSpec] = {
         repo_id="bartowski/phi-4-GGUF",
         filename="*Q4_K_M*.gguf",
     ),
+    # Two new entries
+    "mistral-nemo-12b": ModelSpec(
+        repo_id="bartowski/Mistral-Nemo-Instruct-2407-GGUF",
+        filename="*Q4_K_M*.gguf",
+    ),
+    "llama3.1-8b": ModelSpec(
+        repo_id="bartowski/Meta-Llama-3.1-8B-Instruct-GGUF",
+        filename="*Q4_K_M*.gguf",
+    ),
     # Math specialist. ~83% on the MATH benchmark vs ~58% for generalist 7B;
     # natively trained for tool-integrated reasoning (TIR). Pair with the
     # "math-tir" prompt variant in calc_react / rag_calc_react. No /no_think
