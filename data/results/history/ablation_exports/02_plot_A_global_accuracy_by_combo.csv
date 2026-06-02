@@ -1,0 +1,7 @@
+Category,model_name,strategy_name,n_predictions,n_correct,accuracy,mean_level,median_level,min_level,max_level,mean_latency_ms,median_latency_ms,min_latency_ms,p25_latency_ms,p75_latency_ms,max_latency_ms,accuracy_pct
+History,gemma3-12b,dynamic_few_shot_k3,200,178,0.89,6.765,6.0,1,15,12211.04,12189.5,5342,10537.5,14184.75,18719,89.0
+History,gemma3-12b,wiki_rag,200,183,0.915,6.765,6.0,1,15,15962.665,16265.0,5366,14452.0,17727.5,21121,91.5
+History,granite-8b,dynamic_few_shot_k3,200,175,0.875,6.765,6.0,1,15,5681.975,5432.5,2804,4316.25,6881.75,10798,87.5
+History,granite-8b,wiki_rag,200,183,0.915,6.765,6.0,1,15,8369.07,8260.0,4405,7253.0,9172.0,44901,91.5
+History,phi4-14b,dynamic_few_shot_k3,200,183,0.915,6.765,6.0,1,15,8208.665,8130.5,5412,7184.25,9379.75,11206,91.5
+History,phi4-14b,zero_shot,200,183,0.915,6.765,6.0,1,15,8406.135,8319.0,5568,7538.5,9224.0,12003,91.5
