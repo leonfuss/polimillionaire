@@ -43,6 +43,16 @@ kaggle = [
     "kaggle>=1.6",
     "numpy>=1.26"
 ]
+# Optional. Plotting + tabular deps for running notebooks/final.ipynb
+# locally (gallery render, live leaderboard, Philosophy/News panel).
+# Install with `uv sync --group notebook`.
+notebook = [
+    "matplotlib>=3.8",
+    "seaborn>=0.13",
+    "pandas>=2.0",
+    "pyarrow>=15.0",
+    "jupyter>=1.0",
+]
 
 [build-system]
 requires = ["hatchling"]
