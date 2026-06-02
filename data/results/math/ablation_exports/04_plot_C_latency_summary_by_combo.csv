@@ -1,0 +1,7 @@
+Category,model_name,strategy_name,n_predictions,mean_latency_ms,median_latency_ms,min_latency_ms,p10_latency_ms,p25_latency_ms,p75_latency_ms,p90_latency_ms,max_latency_ms
+Math,granite-8b,calc_react,200,9439.12,8085.5,3356,4759.900000000001,6222.75,12081.0,16765.6,25379
+Math,granite-8b,dynamic_few_shot_k3,200,9710.9,9038.5,2954,5544.3,7189.0,12281.0,14465.599999999999,18272
+Math,phi4-14b,calc_react,200,9962.85,8119.0,3946,5160.5,6125.0,11719.5,17095.3,34572
+Math,phi4-14b,dynamic_few_shot_k3,200,14236.315,13515.5,6639,9097.7,10622.0,17186.0,21435.5,25011
+Math,qwen3-14b,dynamic_few_shot_k3,200,4997.1,3149.5,2558,2734.5,2891.0,4554.75,11205.1,22842
+Math,qwen3-14b,zero_shot,200,13072.875,12124.5,5742,8146.1,9747.5,15737.25,19406.1,27405

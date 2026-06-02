@@ -1,0 +1,16 @@
+column,dtype,non_null,nulls,n_unique
+strategy_name,object,600,0,1
+model_name,object,600,0,3
+prompt_version,object,600,0,1
+question_id,int64,600,0,200
+competition_id,int64,600,0,1
+level,int64,600,0,15
+predicted_option_id,int64,600,0,4
+correct_option_id,int64,600,0,4
+correct,bool,600,0,2
+confidence,float64,600,0,11
+latency_ms,int64,600,0,573
+generated_answer,bool,600,0,2
+Category,object,600,0,1
+correct_bool,bool,600,0,2
+correct_int,int64,600,0,2

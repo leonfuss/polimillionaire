@@ -14,7 +14,10 @@ notebooks/scratch/
 
 # Local data — the live SQLite question log lives in shared Drive,
 # not the repo. Snapshots can be committed deliberately with `git add -f`.
-data/
+# data/results/ is the exception: it holds tracked experiment exports that
+# notebooks/final.ipynb re-renders into the math/science gallery.
+data/index/
+data/cache/
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm

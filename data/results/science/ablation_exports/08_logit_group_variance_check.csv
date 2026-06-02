@@ -1,0 +1,4 @@
+model_name,strategy_name,correct_int_variance
+gemma3-12b,zero_shot,0.07396984924623116
+granite-8b,zero_shot,0.07396984924623115
+phi4-14b,zero_shot,0.052236180904522665

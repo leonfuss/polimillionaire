@@ -1,0 +1,73 @@
+{
+  "exported_at_utc": "2026-06-01T17:24:21.315577+00:00",
+  "target_domain": 2,
+  "domain_name": "Science",
+  "number_of_samples": 200,
+  "execution_matrix": {
+    "granite-8b": [
+      "wiki_rag"
+    ],
+    "phi4-14b": [
+      "zero_shot"
+    ],
+    "gemma3-12b": [
+      "wiki_rag"
+    ]
+  },
+  "n_raw_predictions": 600,
+  "columns": [
+    "strategy_name",
+    "model_name",
+    "prompt_version",
+    "question_id",
+    "competition_id",
+    "level",
+    "predicted_option_id",
+    "correct_option_id",
+    "correct",
+    "confidence",
+    "latency_ms",
+    "generated_answer",
+    "Category",
+    "correct_bool",
+    "correct_int"
+  ],
+  "models": [
+    "gemma3-12b",
+    "granite-8b",
+    "phi4-14b"
+  ],
+  "strategies": [
+    "zero_shot"
+  ],
+  "levels": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15
+  ],
+  "export_files": [
+    "00_data_dictionary.csv",
+    "01_df_ablation_raw_predictions.csv",
+    "01_df_ablation_raw_predictions.jsonl",
+    "01_df_ablation_raw_predictions.parquet",
+    "02_plot_A_global_accuracy_by_combo.csv",
+    "03_plot_B_accuracy_per_level.csv",
+    "04_plot_C_latency_summary_by_combo.csv",
+    "05_latency_by_correctness_raw_for_boxplot.csv",
+    "06_latency_by_correctness_summary.csv",
+    "07_logit_latency_vs_correctness_data.csv",
+    "08_logit_group_variance_check.csv"
+  ]
+}

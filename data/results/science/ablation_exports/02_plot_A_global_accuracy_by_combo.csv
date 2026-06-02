@@ -1,0 +1,4 @@
+Category,model_name,strategy_name,n_predictions,n_correct,accuracy,mean_level,median_level,min_level,max_level,mean_latency_ms,median_latency_ms,min_latency_ms,p25_latency_ms,p75_latency_ms,max_latency_ms,accuracy_pct
+Science,gemma3-12b,zero_shot,200,184,0.92,9.21,10.0,1,15,12349.765,12205.0,7788,10797.75,13570.75,17680,92.0
+Science,granite-8b,zero_shot,200,184,0.92,9.21,10.0,1,15,6822.09,6807.0,3424,6015.5,7603.5,11146,92.0
+Science,phi4-14b,zero_shot,200,189,0.945,9.21,10.0,1,15,8918.26,9011.0,4942,7932.5,9717.5,12821,94.5

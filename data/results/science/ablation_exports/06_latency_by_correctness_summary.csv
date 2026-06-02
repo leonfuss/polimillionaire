@@ -1,0 +1,10 @@
+Category,model_name,strategy_name,Status,n_predictions,mean_latency_ms,median_latency_ms,min_latency_ms,p25_latency_ms,p75_latency_ms,max_latency_ms
+Science,gemma3-12b,zero_shot,Correct,184,12271.673913043478,12126.0,7788,10726.25,13408.75,17680
+Science,gemma3-12b,zero_shot,Incorrect,16,13247.8125,13171.5,9378,12352.5,14609.5,16468
+Science,gemma3-12b,zero_shot,Total,200,12349.765,12205.0,7788,10797.75,13570.75,17680
+Science,granite-8b,zero_shot,Correct,184,6735.923913043478,6758.5,3424,5931.25,7466.75,11146
+Science,granite-8b,zero_shot,Incorrect,16,7813.0,7619.5,6152,7038.5,8408.5,10030
+Science,granite-8b,zero_shot,Total,200,6822.09,6807.0,3424,6015.5,7603.5,11146
+Science,phi4-14b,zero_shot,Correct,189,8929.968253968254,9051.0,4942,7987.0,9752.0,12821
+Science,phi4-14b,zero_shot,Incorrect,11,8717.09090909091,8230.0,7431,7705.5,8994.0,11916
+Science,phi4-14b,zero_shot,Total,200,8918.26,9011.0,4942,7932.5,9717.5,12821

@@ -1,0 +1,7 @@
+model_name,strategy_name,correct_int_variance
+granite-8b,calc_react,0.13507537688442214
+granite-8b,dynamic_few_shot_k3,0.17798994974874352
+phi4-14b,calc_react,0.07816582914572864
+phi4-14b,dynamic_few_shot_k3,0.14834170854271356
+qwen3-14b,dynamic_few_shot_k3,0.17798994974874366
+qwen3-14b,zero_shot,0.102286432160804
