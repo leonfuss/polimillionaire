@@ -1,0 +1,7 @@
+model_name,strategy_name,correct_int_variance
+gemma3-12b,dynamic_few_shot_k3,0.08231155778894472
+gemma3-12b,zero_shot,0.10613065326633166
+phi4-14b,dynamic_few_shot_k3,0.09444723618090449
+phi4-14b,zero_shot,0.09839195979899491
+qwen3-14b,dynamic_few_shot_k3,0.07396984924623114
+qwen3-14b,wiki_rag,0.11366834170854276
