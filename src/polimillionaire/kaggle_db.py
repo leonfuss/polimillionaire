@@ -86,6 +86,13 @@ def pull_db(
 ) -> Path:
     """Download the dataset's current version and copy the DB to `target_path`.
 
+    Uses Kaggle's per-file download endpoint (`dataset_download_file`) rather
+    than the whole-dataset zip. The whole-dataset endpoint returns a 22-byte
+    empty zip when the caller authenticates with an OAuth-style
+    ``credentials.json`` token whose scope is dataset-read only — silently
+    breaking pulls from a laptop. The per-file path works for both OAuth and
+    legacy ``kaggle.json`` tokens.
+
     Returns the target path (always absolute). Sets up the parent dir.
     Idempotent: re-running overwrites the target with the latest version.
     """
@@ -94,24 +101,37 @@ def pull_db(
     target.parent.mkdir(parents=True, exist_ok=True)
 
     api = _kaggle_api()
-    # `dataset_download_files` writes a zip by default and unzips it.
-    # We download to a temp staging dir to avoid clobbering other files
-    # in target.parent.
     staging = target.parent / "_kaggle_db_pull"
     if staging.exists():
         shutil.rmtree(staging)
     staging.mkdir()
-    api.dataset_download_files(dataset, path=str(staging), unzip=True, quiet=False)
 
-    src = staging / db_filename
-    if not src.exists():
-        # Some downloads keep the zip if the API decides not to unzip.
-        zip_path = staging / f"{dataset.split('/')[-1]}.zip"
+    try:
+        api.dataset_download_file(dataset, db_filename, path=str(staging), force=True, quiet=False)
+    except Exception as e:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise RuntimeError(f"failed to download {db_filename} from dataset {dataset}: {e}") from e
+
+    # `dataset_download_file` writes either `<file>` or `<file>.zip` depending
+    # on whether the server pre-zipped the response. Resolve both.
+    candidates = [staging / db_filename, staging / f"{db_filename}.zip"]
+    src = next((p for p in candidates if p.exists()), None)
+    if src is None:
+        contents = sorted(p.name for p in staging.iterdir())
+        shutil.rmtree(staging, ignore_errors=True)
         raise FileNotFoundError(
-            f"{db_filename} not found in dataset {dataset}. "
-            f"Staging dir contents: {sorted(p.name for p in staging.iterdir())}. "
-            f"Zip path checked: {zip_path}"
+            f"{db_filename} not found in dataset {dataset} after download. "
+            f"Staging dir contents: {contents}"
         )
+
+    if src.suffix == ".zip":
+        # Unzip just our file out of the wrapper.
+        import zipfile
+
+        with zipfile.ZipFile(src) as zf:
+            zf.extract(db_filename, path=staging)
+        src = staging / db_filename
+
     shutil.copy(src, target)
     shutil.rmtree(staging)
     return target
