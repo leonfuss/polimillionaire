@@ -1,0 +1,7 @@
+Category,model_name,strategy_name,n_predictions,n_correct,accuracy,mean_level,median_level,min_level,max_level,mean_latency_ms,median_latency_ms,min_latency_ms,p25_latency_ms,p75_latency_ms,max_latency_ms,accuracy_pct
+Entertainment,gemma3-12b,dynamic_few_shot_k3,200,182,0.91,5.575,5.0,1,15,11751.755,11720.5,4553,9690.5,13546.5,18478,91.0
+Entertainment,gemma3-12b,zero_shot,200,176,0.88,5.575,5.0,1,15,12692.555,12478.5,9064,11367.0,13786.0,18384,88.0
+Entertainment,phi4-14b,dynamic_few_shot_k3,200,179,0.895,5.575,5.0,1,15,7841.08,7818.5,4464,6676.5,9043.25,12382,89.5
+Entertainment,phi4-14b,zero_shot,200,178,0.89,5.575,5.0,1,15,8991.995,9029.0,5731,7872.5,10033.0,13479,89.0
+Entertainment,qwen3-14b,dynamic_few_shot_k3,200,184,0.92,5.575,5.0,1,15,3539.225,3403.0,2499,3058.25,3780.75,8587,92.0
+Entertainment,qwen3-14b,wiki_rag,200,174,0.87,5.575,5.0,1,15,13278.215,13271.0,5661,11834.0,14459.75,60528,87.0
