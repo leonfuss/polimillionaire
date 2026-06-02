@@ -264,5 +264,76 @@ def main() -> None:
         parser.print_help()
 
 
+def nb_replay2(strategy, log_path, competition_id=None, limit=None):
+    import sqlite3
+    import json
+    from tqdm import tqdm
+    from polimillionaire._vendor.millionaire_client.models import Option, Question
+    from polimillionaire.eval.results import ReplayResult
+    from polimillionaire.strategies.base import Context
+    
+    # 1. Fetch and close immediately. Do not hold DB locks during inference.
+    with sqlite3.connect(log_path) as con:
+        con.row_factory = sqlite3.Row
+        
+        sql = """
+            WITH RankedPredictions AS (
+                SELECT question_id, question_text, options_json, level, 
+                       competition_id, correct_option_id_if_known, generated_answer,
+                       ROW_NUMBER() OVER(PARTITION BY question_id ORDER BY id DESC) as rn
+                FROM predictions
+                WHERE correct_option_id_if_known IS NOT NULL
+        """
+        params = []
+        
+        if competition_id is not None:
+            sql += " AND competition_id = ?"
+            params.append(competition_id)
+            
+        sql += """
+            )
+            SELECT * FROM RankedPredictions WHERE rn = 1
+            ORDER BY question_id  -- CRITICAL: Deterministic sorting for reliable ablation
+        """
+        
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(limit)
+            
+        cur = con.execute(sql, params)
+        rows = cur.fetchall()
+
+    results = []
+    
+    for row in tqdm(rows, desc=f"Evaluating Domain {competition_id}"):
+        options = [Option(**o) for o in json.loads(row["options_json"])]
+        question = Question(id=row["question_id"], text=row["question_text"], options=options, level=row["level"])
+        ctx = Context(competition_id=row["competition_id"], level=row["level"])
+        
+        decision = strategy(question, ctx)
+        correct_id = int(row["correct_option_id_if_known"])
+        
+        # Safely parse SQLite mixed-type booleans
+        raw_gen = row["generated_answer"]
+        is_generated = raw_gen in (1, '1', 'true', 'True', True)
+        
+        results.append(ReplayResult(
+            strategy_name=decision.strategy_name, 
+            model_name=decision.model_name, 
+            prompt_version=decision.prompt_version, 
+            question_id=row["question_id"], 
+            competition_id=row["competition_id"], 
+            level=row["level"],
+            predicted_option_id=decision.option_id, 
+            correct_option_id=correct_id, 
+            correct=(decision.option_id == correct_id), 
+            confidence=decision.confidence, 
+            latency_ms=decision.latency_ms, 
+            generated_answer=is_generated
+        ))
+
+    return results
+
+
 if __name__ == "__main__":
     main()
