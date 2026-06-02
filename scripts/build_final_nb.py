@@ -74,7 +74,8 @@ CELLS.append(
         "> **This notebook is built for Kaggle.** The bootstrap cell clones the repo,",
         "> attaches the pre-built FAISS+BM25 indices dataset, pulls the latest version",
         "> of the shared question log from a Kaggle Dataset, and pins retrieval to the",
-        "> second T4. A Colab fallback is included but is the secondary path.",
+        "> second T4. A Colab fallback is included but is the secondary path and not",
+        "> guaranteed to run",
         "",
         "> **`RUN_LIVE` defaults to `False`.** The notebook renders end-to-end without",
         "> playing a live game or running any LLM. Flip the flag in the bootstrap cell",
@@ -108,6 +109,15 @@ CELLS.append(
         "  K=1 up to K=50, then collapses to **28%** at K=150. The prompt",
         "  exceeds the model's 8192-token KV cache and attention degrades to",
         "  near-random. K=3 is the practical sweet spot.",
+        "",
+        "**A note on model selection.** Nine open-weight models are registered in",
+        "`polimillionaire.llm.MODELS`, but the targeted ablations below cover only",
+        "three to four per competition. Candidates were preselected from a broader",
+        "screening pass over the shared SQLite log: per `(model, strategy)` accuracy",
+        "was tracked across hundreds of casually-played live games, and only the",
+        "most promising combinations were then re-run on a controlled N=200 to 400",
+        "question slice for the gallery. Models that consistently under-performed",
+        "early are absent from the final panels by design, not by oversight.",
     )
 )
 
@@ -175,6 +185,9 @@ CELLS.append(
         "- `cuda:1`: explicitly pinned. bge embedders, cross-encoder reranker,",
         "  Whisper. Retrieval and ASR are isolated from the LLM's device so that",
         "  reranking completes in under 100 ms rather than contending for memory.",
+        "",
+        "Using the llama-cpp-python allocator and the pytorch allocator on the same GPU",
+        "results in memory leaks / memory overrides.",
     )
 )
 
@@ -215,7 +228,7 @@ CELLS.append(
         "## Bootstrap",
         "",
         "Detects Kaggle / Colab / local. On Kaggle: clones the repo, installs",
-        "what's missing, attaches the pre-built indices dataset by symlink,",
+        "what's missing, attaches the pre-built indices dataset via symlink,",
         "and pulls the latest shared question log via `polimillionaire.kaggle_db.pull_db`.",
         "On Colab or locally: best-effort fallback for grading convenience.",
     )
@@ -260,7 +273,7 @@ CELLS.append(
         "    REPO_DIR = _find_repo_root(Path.cwd())",
         "",
         "if ON_LOCAL and not (REPO_DIR / 'src' / 'polimillionaire').exists():",
-        "    # Fallback for when the grader hands the notebook only the .ipynb file:",
+        "    # Fallback for when the grader run only the .ipynb file:",
         "    # clone the public repo into cwd. Requires `git` and internet access.",
         "    clone_target = Path.cwd() / 'polimillionaire'",
         "    if not clone_target.exists():",
@@ -306,6 +319,7 @@ CELLS.append(
         "    os.system(f'pip install -q -e {REPO_DIR} --no-deps')",
         "",
         "    # FAISS/BM25 indices live in a separate Kaggle Dataset, attached via UI.",
+        '    # Make sure to attach using the "add dataset" button on the side bar.',
         "    INDEX_CANDIDATES = [",
         "        Path('/kaggle/input/polimillionaire-indices'),",
         "        Path('/kaggle/input/datasets/leonfuss/polimillionaire-indices'),",
@@ -602,10 +616,10 @@ CELLS.append(
         "## The shared question log as canonical artefact",
         "",
         "Every prediction is logged as a row in `data/questions.sqlite`,",
-        "opened in WAL mode for concurrent writers and mirrored to a private Kaggle Dataset",
+        "opened in WAL mode for concurrent writers and mirrored to a Kaggle Dataset",
         "between sessions. The log is the project's most valuable artefact.",
         "Server-side questions are closed: each question seen, paired with the answer",
-        "the server confirmed, becomes a permanent training datapoint that no party",
+        "the server confirmed, becomes a permanent training / validation datapoint that no party",
         "outside the team can recreate.",
         "",
         "**Schema** (one row per prediction event, not per question):",
@@ -625,7 +639,7 @@ CELLS.append(
         "",
         "Running the same question through three strategies produces three rows.",
         "This is what enables offline replay: any new strategy, model, or ",
-        "prompt can be rerun over hundreds of past questions in a few minutes, rather than",
+        "prompt can be rerun over hundreds of past questions in a few hours, rather than",
         "waiting for live games. All figures below are drawn from this log.",
     )
 )
@@ -709,19 +723,13 @@ CELLS.append(
 # ---------------------------------------------------------------------------
 CELLS.append(
     md(
-        "## Results gallery: Science & Math (re-rendered from logged predictions)",
-        "",
-        "Re-rendered in a uniform style from `data/results/{science,math}/",
-        "ablation_exports/01_df_ablation_raw_predictions.parquet`. Each parquet is",
-        "the exact set of predictions a teammate's ablation run produced on Kaggle",
-        "with the LLM in the loop, at N=200 questions per (model, strategy) combo.",
-        "",
-        "**Science** ran only `zero_shot`, so the gallery for Science shows just the",
-        "latency boxplot; the per-model accuracy numbers are stated inline below.",
-        "**Math** likewise shows only global accuracy and latency: the MATH-500",
-        "sample is heavily skewed toward easy questions (N=360 at level 1, single",
-        "digits at levels 11 to 15), so per-level or per-bucket accuracy estimates",
-        "for the hard tail are too noisy to plot honestly.",
+        "## Results gallery: Science & Math",
+        "Each gallery has two panels: global accuracy and latency. Per-level accuracy",
+        "is omitted because the MATH-500 sample is heavily skewed toward easy",
+        "questions (N=360 at level 1, single digits at levels 11 to 15), and the",
+        "Science ablation ran only `zero_shot` so a per-level breakdown adds nothing.",
+        "**Science**: only `zero_shot` was tested, so the accuracy panel is a per-model",
+        "comparison (no strategy hue).",
     )
 )
 
@@ -754,8 +762,14 @@ CELLS.append(
         "        ax = axes[i]; i += 1",
         "        acc = (df.groupby(['model_name','strategy_name'])['correct_int']",
         "                 .mean().reset_index().rename(columns={'correct_int':'win_rate'}))",
-        "        sns.barplot(data=acc, x='model_name', y='win_rate',",
-        "                    hue='strategy_name', ax=ax, palette='deep')",
+        "        # When there is only one strategy (e.g. Science zero_shot only) drop",
+        "        # the hue to avoid a single-value legend.",
+        "        if acc['strategy_name'].nunique() > 1:",
+        "            sns.barplot(data=acc, x='model_name', y='win_rate',",
+        "                        hue='strategy_name', ax=ax, palette='deep')",
+        "        else:",
+        "            sns.barplot(data=acc, x='model_name', y='win_rate',",
+        "                        ax=ax, palette='deep', hue='model_name', legend=False)",
         "        ax.set_title(f'A. Global accuracy ({title})')",
         "        ax.set_ylim(0, 1.0)",
         "        ax.set_ylabel('Win rate'); ax.set_xlabel('')",
@@ -795,7 +809,7 @@ CELLS.append(
         "",
         "render_gallery(",
         "    RESULTS_DIR / 'science' / 'ablation_exports' / '01_df_ablation_raw_predictions.parquet',",
-        "    title='Science (cid 2, N=200)', panels=('C',),",
+        "    title='Science (cid 2, N=200)', panels=('A', 'C'),",
         ")",
         "render_gallery(",
         "    RESULTS_DIR / 'math' / 'ablation_exports' / '01_df_ablation_raw_predictions.parquet',",
@@ -825,11 +839,9 @@ CELLS.append(
 
 CELLS.append(
     md(
-        "## Entertainment & History: cached figures",
+        "## Entertainment & History",
         "",
-        "Same three-panel layout, embedded from the teammate notebooks that",
-        "produced them on Kaggle. We do not have raw parquet exports for these",
-        "two competitions, only the figures themselves.",
+        "We do not have raw parquet exports for these two competitions, only the figures themselves.",
     )
 )
 
@@ -864,7 +876,7 @@ CELLS.append(
         "",
         "**History.** A near-tie: `granite-8b + wiki_rag` at approximately 92%, `phi4-14b`",
         "zero-shot at 91%, and `gemma3-12b + wiki_rag` at 91%. Wikipedia chunks carry",
-        "tight technical vocabulary for history, and Wikipedia is itself the source",
+        "tight technical vocabulary for history, and Wikipedia probably is itself the source",
         "material, so retrieval augmentation pays off, albeit by only one point over a competitive",
         "zero-shot baseline. The cost is visible in panel C: the `wiki_rag` latency",
         "distribution is wider and skewed higher than that of zero-shot.",
@@ -934,7 +946,10 @@ CELLS.append(
         "        'SELECT question_id, competition_id, model_name, strategy_name,'",
         "        ' prompt_version, predicted_option_id, latency_ms' + mode_select +",
         '        f" FROM predictions WHERE competition_id IN ({cid_list})"',
-        "        \"   AND strategy_name != 'db_retrieval'\",",
+        "        \"   AND strategy_name != 'db_retrieval'\"",
+        "        # hermes3-8b was barely sampled on Philosophy / News so its numbers",
+        "        # are not statistically meaningful; exclude it from the panel.",
+        "        \"   AND model_name != 'hermes3-8b'\",",
         "        con,",
         "    )",
         "",
@@ -1197,6 +1212,9 @@ CELLS.append(
         '   from "rebuild the harness for every new idea" into "replace one',
         '   line". Most of the iteration speed in the final weeks came from',
         "   replaying strategies over the log rather than waiting for live games.",
+        "   The same log also acted as a screening tool: the gallery models were",
+        "   preselected from a wider casual-play pass, and only the most promising",
+        "   `(model, strategy)` combinations were re-run on a controlled slice.",
         "2. **Retrieval helps where Wikipedia is the source material** (History,",
         "   approximately one point over a competitive zero-shot baseline) and harms accuracy where it",
         "   is not (Entertainment, where noisy distractors retrieve the wrong articles).",
