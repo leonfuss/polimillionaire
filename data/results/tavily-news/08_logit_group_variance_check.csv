@@ -1,0 +1,4 @@
+model_name,strategy_name,correct_int_variance
+granite-8b,wiki_rag,0.09839195979899493
+hermes4-14b,wiki_rag,0.15467336683417088
+qwen3-14b,wiki_rag,0.23293969849246243

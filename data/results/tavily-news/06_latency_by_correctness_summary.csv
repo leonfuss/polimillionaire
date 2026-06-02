@@ -1,0 +1,10 @@
+Category,model_name,strategy_name,Status,n_predictions,mean_latency_ms,median_latency_ms,min_latency_ms,p25_latency_ms,p75_latency_ms,max_latency_ms
+News,granite-8b,wiki_rag,Correct,178,8100.820224719101,7960.0,4118,7016.0,9342.0,12800
+News,granite-8b,wiki_rag,Incorrect,22,9489.0,9575.0,7229,8887.0,10101.25,11707
+News,granite-8b,wiki_rag,Total,200,8253.52,8125.0,4118,7082.25,9554.0,12800
+News,hermes4-14b,wiki_rag,Correct,162,7797.271604938272,7334.5,3222,5973.25,9017.0,17418
+News,hermes4-14b,wiki_rag,Incorrect,38,6887.078947368421,5964.0,4254,5492.25,7998.75,12513
+News,hermes4-14b,wiki_rag,Total,200,7624.335,7072.5,3222,5782.5,8780.25,17418
+News,qwen3-14b,wiki_rag,Correct,127,9713.8031496063,9500.0,6432,8306.5,11183.5,13786
+News,qwen3-14b,wiki_rag,Incorrect,73,9707.164383561643,9268.0,5890,8196.0,10965.0,15320
+News,qwen3-14b,wiki_rag,Total,200,9711.38,9498.5,5890,8290.75,11046.0,15320

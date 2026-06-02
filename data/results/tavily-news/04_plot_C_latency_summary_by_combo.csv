@@ -1,0 +1,4 @@
+Category,model_name,strategy_name,n_predictions,mean_latency_ms,median_latency_ms,min_latency_ms,p10_latency_ms,p25_latency_ms,p75_latency_ms,p90_latency_ms,max_latency_ms
+News,granite-8b,wiki_rag,200,8253.52,8125.0,4118,6325.8,7082.25,9554.0,10295.3,12800
+News,hermes4-14b,wiki_rag,200,7624.335,7072.5,3222,5150.8,5782.5,8780.25,11041.3,17418
+News,qwen3-14b,wiki_rag,200,9711.38,9498.5,5890,7135.3,8290.75,11046.0,12530.6,15320
