@@ -1,0 +1,6 @@
+Category,model_name,strategy_name,n_predictions,mean_latency_ms,median_latency_ms,min_latency_ms,p10_latency_ms,p25_latency_ms,p75_latency_ms,p90_latency_ms,max_latency_ms
+News,gemma3-12b,dynamic_few_shot_k3,200,6278.015,6049.0,4220,5025.5,5513.75,6920.5,7844.0,10050
+News,gemma3-12b,zero_shot,200,13291.525,13104.5,9447,10993.1,11989.75,14400.5,15796.3,18575
+News,phi4-14b,dynamic_few_shot_k3,200,6052.46,5780.5,3927,4669.0,5110.5,6519.0,7889.6,11383
+News,phi4-14b,wiki_rag,200,8945.49,8840.5,6093,7400.1,8082.0,9741.75,10603.6,13414
+News,phi4-14b,zero_shot,200,9601.54,9737.5,6327,7913.2,8672.75,10409.75,11267.6,13566

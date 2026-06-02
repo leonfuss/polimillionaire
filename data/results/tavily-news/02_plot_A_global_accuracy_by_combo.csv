@@ -1,0 +1,4 @@
+Category,model_name,strategy_name,n_predictions,n_correct,accuracy,mean_level,median_level,min_level,max_level,mean_latency_ms,median_latency_ms,min_latency_ms,p25_latency_ms,p75_latency_ms,max_latency_ms,accuracy_pct
+News,granite-8b,wiki_rag,200,178,0.89,3.305,2.0,1,15,8253.52,8125.0,4118,7082.25,9554.0,12800,89.0
+News,hermes4-14b,wiki_rag,200,162,0.81,3.305,2.0,1,15,7624.335,7072.5,3222,5782.5,8780.25,17418,81.0
+News,qwen3-14b,wiki_rag,200,127,0.635,3.305,2.0,1,15,9711.38,9498.5,5890,8290.75,11046.0,15320,63.5

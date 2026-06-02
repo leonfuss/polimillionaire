@@ -1,0 +1,16 @@
+Category,model_name,strategy_name,Status,n_predictions,mean_latency_ms,median_latency_ms,min_latency_ms,p25_latency_ms,p75_latency_ms,max_latency_ms
+News,gemma3-12b,dynamic_few_shot_k3,Correct,136,6491.558823529412,6206.5,4220,5646.5,7223.25,10050
+News,gemma3-12b,dynamic_few_shot_k3,Incorrect,64,5824.234375,5767.0,4369,5316.75,6448.5,9185
+News,gemma3-12b,dynamic_few_shot_k3,Total,200,6278.015,6049.0,4220,5513.75,6920.5,10050
+News,gemma3-12b,zero_shot,Correct,132,12991.75,12785.5,9447,11651.75,14319.5,18223
+News,gemma3-12b,zero_shot,Incorrect,68,13873.441176470587,13581.0,10423,12562.0,15088.25,18575
+News,gemma3-12b,zero_shot,Total,200,13291.525,13104.5,9447,11989.75,14400.5,18575
+News,phi4-14b,dynamic_few_shot_k3,Correct,139,6253.884892086331,5889.0,3927,5249.0,6673.0,11383
+News,phi4-14b,dynamic_few_shot_k3,Incorrect,61,5593.475409836065,5515.0,4109,4931.0,6133.0,8411
+News,phi4-14b,dynamic_few_shot_k3,Total,200,6052.46,5780.5,3927,5110.5,6519.0,11383
+News,phi4-14b,wiki_rag,Correct,136,8847.64705882353,8703.5,6093,8021.75,9708.0,11985
+News,phi4-14b,wiki_rag,Incorrect,64,9153.40625,9118.5,6395,8312.5,9854.0,13414
+News,phi4-14b,wiki_rag,Total,200,8945.49,8840.5,6093,8082.0,9741.75,13414
+News,phi4-14b,zero_shot,Correct,135,9502.22962962963,9581.0,6327,8687.0,10293.5,13400
+News,phi4-14b,zero_shot,Incorrect,65,9807.8,10014.0,6689,8677.0,10876.0,13566
+News,phi4-14b,zero_shot,Total,200,9601.54,9737.5,6327,8672.75,10409.75,13566
