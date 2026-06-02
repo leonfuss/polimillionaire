@@ -980,6 +980,8 @@ CELLS.append(
 
 CELLS.append(
     code(
+        "from IPython.display import Image, display",
+        "",
         "scaling_dir = RESULTS_DIR / 'scaling'",
         "if scaling_dir.exists():",
         "    for fname in ['fig_06_cell42_out0.png', 'fig_07_cell46_out0.png']:",
